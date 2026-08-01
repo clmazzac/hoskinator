@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod rpc;
 mod serve;
 
 #[derive(Parser)]
