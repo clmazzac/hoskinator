@@ -781,6 +781,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoskinator-ai"
+version = "0.1.0"
+dependencies = [
+ "hoskinator-core",
+]
+
+[[package]]
 name = "hoskinator-core"
 version = "0.1.0"
 dependencies = [

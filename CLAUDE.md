@@ -70,6 +70,7 @@ Decisions that apply across the whole repo, newest last. Decisions scoped to one
 | Component | File |
 |---|---|
 | Store (`hoskinator-core`) | `docs/decisions/store.md` |
+| AI layer (`hoskinator-ai`) | `docs/decisions/ai.md` |
 | Home and config | `docs/decisions/home-and-config.md` |
 | Transport (HTTP + JSON-RPC) | `docs/decisions/transport.md` |
 | Web UI (`web/`) | `docs/decisions/web.md` |

@@ -1,0 +1,9 @@
+[package]
+name = "hoskinator-ai"
+description = "Hoskinator's optional AI layer: scoring, gap analysis, and drafting."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+hoskinator-core = { workspace = true }
