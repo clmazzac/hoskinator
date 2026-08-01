@@ -30,7 +30,8 @@ One wording of a Bullet, held in the Master Store. A Bullet owns one or more Var
 _Avoid_: version (reserved for git history — see below).
 
 **Profile**:
-The singleton record of personal/contact info (name, email, phone, location, links) held in the Master Store. The engine injects it into the `cv:` header of every resume YAML it writes — so the header block is engine-owned boilerplate, not hand-authored tailoring.
+The singleton record held in the Master Store mirroring rendercv's `cv:` header: `name`, `headline`, `location`, `photo`, `email`, `phone`, `website`, `social_networks`, and `custom_connections` — everything under `cv:` except `sections`. The engine injects it into the header of every resume YAML it writes, so the header block is engine-owned boilerplate, not hand-authored tailoring. Every field is optional, because rendercv requires none of them; a user may omit even their name. Presentation of the header (which connections appear, and in what order) is _not_ Profile — that lives in `design:`, which the user owns (ADR-0006).
+_Avoid_: contact info (it carries more than contacts), header (that is the rendered output, not the record).
 
 **Job Description (JD)**:
 The pasted text of a role posting. Stored as a standalone record in the Master Store (searchable, reusable across applications), not bound to any branch. The input the tool scores and generates bullets against.
