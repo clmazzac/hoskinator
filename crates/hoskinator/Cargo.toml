@@ -9,7 +9,7 @@ repository.workspace = true
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 hoskinator-core = { workspace = true }
-jsonrpsee = { version = "0.26", features = ["macros", "server"] }
+jsonrpsee = { version = "0.26", features = ["http-client", "macros", "server"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
