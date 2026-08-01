@@ -13,7 +13,8 @@ Default vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ### Domain docs
 
-Single-context (one `CONTEXT.md` + `docs/adr/` at the repo root). See `docs/agents/domain.md`.
+Single-context (one `CONTEXT.md` + `docs/adr/` + `docs/decisions/` at the repo root). See
+`docs/agents/domain.md`.
 
 ## Workflow
 
@@ -36,7 +37,7 @@ choices in the commit message or a comment so review does not require reverse-en
 
 Keep doc comments terse: say what the item does or what the rule is, and stop. Rationale — why the
 rule is that way, what it guards against, what the alternative was — belongs in the commit message,
-the PR description, an ADR, or the decision log below, not inline.
+the PR description, an ADR, or a decision log, not inline.
 
 **Why:** reasoning inline reads as padding, and it goes stale in the place least likely to be
 reread. One line that is true beats three that explain themselves.
@@ -44,45 +45,20 @@ reread. One line that is true beats three that explain themselves.
 ### Implementation decisions are the maintainer's call
 
 Do not pick libraries, frameworks, schema shapes, or API surfaces unilaterally. Propose options with
-trade-offs and get sign-off before writing code. Record what gets decided in the log below.
+trade-offs and get sign-off before writing code. Record what gets decided in `docs/decisions/`, or
+in the log below if it applies repo-wide.
 
 ## Decision log
 
-Design decisions made during implementation, newest last. Architectural decisions with lasting
-consequences belong in `docs/adr/` instead; this log is for the smaller calls that shape the code.
+Decisions that apply across the whole repo, newest last. Decisions scoped to one component live in
+`docs/decisions/`; architectural decisions with lasting consequences belong in `docs/adr/`.
 
-### Transport: axum owns HTTP, jsonrpsee dispatches (Slice 1, #2)
-
-`axum` owns the socket, static-file serving, and the no-op auth middleware. `jsonrpsee`'s
-`RpcModule` is used **purely as a dispatcher** — an axum handler passes the request body to
-`RpcModule::raw_json_request` and returns the JSON response.
-
-**Why:** ADR-0003's premise is a stable JSON-RPC contract spoken by arbitrary frontends, so
-protocol correctness (2.0 spec edge cases, batching, reserved error codes) is the wrong thing to
-hand-roll. `#[rpc(server, client)]` also generates the client, which the CLI needs — hand-rolling
-means writing both ends for every method across Slices 2–14. Using `raw_json_request` rather than
-jsonrpsee's own server keeps axum in charge of the port, so co-hosting the embedded SPA stays trivial.
-
-**Accepted costs:** jsonrpsee is pre-1.0 (0.26) and churns across versions; requests round-trip
-through strings rather than typed values.
-
-### Store client: the `libsql` crate (Slice 1, #2)
-
-**Why:** the only client that is actually libSQL, matching the PRD and #2 as written, and it keeps
-the deferred Turso sync a config change rather than a port.
-
-**Accepted costs:** youngest of the candidates, thinner docs, and no compile-time SQL verification
-(`sqlx` was the alternative that offered it) — SQL errors surface at runtime, so store code needs
-real test coverage to compensate.
-
-### Web UI: React + Vite + TypeScript (Slice 1, #2)
-
-**Why:** chosen for Slice 9's two-panel assembly screen, not Slice 1's form — it has the deepest
-ecosystem for drag-and-drop, virtualized lists, and an embeddable YAML/code editor. Bundle size is
-irrelevant for a localhost-served single-user tool.
-
-**Prerequisite:** Node must be installed **inside WSL**. `npm` currently resolves to the Windows
-install (`/mnt/c/Program Files/nodejs`), which breaks Vite builds run from WSL.
+| Component | File |
+|---|---|
+| Store (`hoskinator-core`) | `docs/decisions/store.md` |
+| Home and config | `docs/decisions/home-and-config.md` |
+| Transport (HTTP + JSON-RPC) | `docs/decisions/transport.md` |
+| Web UI (`web/`) | `docs/decisions/web.md` |
 
 ### Layout: Cargo workspace at the repo root (Slice 1, #2)
 
@@ -118,66 +94,7 @@ Resolution order is `HOSKINATOR_HOME` → the `home` key in the config file → 
 directory, and never the current working directory. A per-command `--home` flag was deliberately
 skipped: nothing consumes it until the CLI exists, and it layers on cleanly then.
 
-### The store lives in Home; the resume repo does not (Slice 1, #2)
+### Errors via `thiserror`, not `anyhow` (Slice 1, #2)
 
-Home holds only the store, at `store/hoskinator.db` — its own directory, because SQLite writes
-`-wal` and `-shm` files beside the database and backups may join them later. The rendercv git
-repository is located separately, by configuration.
-
-**Why:** the store is tool-managed and opaque, so burying it in a platform directory is right. The
-repo is the opposite — it is the user's own artifact, which they will want to `cd` into, run `git`
-in, and push to their own remote. ADR-0001's "database beside the repo" is satisfied by the two
-being independently located, and the repo stays vanilla either way.
-
-**Accepted cost:** two paths to resolve rather than one, and first run must either ask where the
-repo goes or create a default.
-
-### Platform paths via `directories`; errors via `thiserror`; config in TOML (Slice 1, #2)
-
-- **`directories`** gives native paths per platform (XDG on Linux, `Application Support` on macOS,
-  `%APPDATA%` on Windows) rather than forcing XDG everywhere, since ADR-0003 makes multi-device a
-  v1 goal. Cost: no single documented path.
-- **`thiserror`** typed enums per module, not `anyhow`. `core` is a library, and PR 4 must map its
-  errors onto JSON-RPC codes by matching variants rather than parsing message strings.
-- **TOML** for the config file, with `deny_unknown_fields` so a typo is an error rather than a
-  setting that silently does nothing.
-
-### The store API is async, behind one `Arc<Store>` (Slice 1, #3)
-
-`hoskinator-core`'s public store API is `async`, and the crate exposes a `Store` owning a single
-libSQL `Connection`, shared as `Arc<Store>`. WAL mode is set at initialisation.
-
-**Why async:** `libsql` is async and axum is async, so the daemon composes without an adapter. A sync
-wrapper would have to `block_on` internally, which panics when called from a tokio worker thread —
-a runtime failure rather than a compile error. Local SQLite I/O is blocking underneath, so async buys
-nothing today; it pays off for Turso remote later, and for holding many AI calls in flight.
-
-**Why one handle, not a pool:** ADR-0003 says the engine owns the single connection, and `Connection`
-is already `Clone + Send + Sync`. It also keeps pooling *reversible* — `Store`'s internals can grow a
-pool with no call-site changes, whereas passing a connection per call would put it in every
-signature. For bulk work the bottleneck is LLM API latency, not the database, by roughly three orders
-of magnitude.
-
-### Migrations: numbered SQL files + `PRAGMA user_version` (Slice 1, #3)
-
-Embedded `.sql` files applied in order, with `user_version` recording what has run.
-
-**Why:** near-forced — no migration crate supports libSQL. `refinery`'s driver features are
-`rusqlite`, `postgres`, `mysql`, `tokio-postgres`, `mysql_async`, and `tiberius` (checked against its
-`Cargo.toml`); `sqlx::migrate` requires sqlx itself. Idempotent `CREATE TABLE IF NOT EXISTS` was rejected because later slices add FTS5 tables
-that must be created *and backfilled* on databases that already hold data.
-
-### Profile mirrors the whole `cv:` header (Slice 1, #3)
-
-Every `cv:` field except `sections`, with `email`, `phone`, `website`, `social_networks`, and
-`custom_connections` stored as JSON columns.
-
-**Why the full mirror:** the user must be able to express any header rendercv supports, including
-omitting ubiquitous fields — `Cv.required` is `none`, so *every* field is optional. A single-valued
-subset could not represent multiple emails or `custom_connections`.
-
-**Why JSON, not child tables:** Profile is a singleton always read and written whole, so normalising
-buys no query power, and JSON preserves array order — which carries through to the rendered header.
-
-**Two constraints this imposes:** every field must be nullable, and the YAML writer must *omit*
-`None` rather than emit `null` or `""` — an empty string renders as a blank connection.
+Typed enums per module. `core` is a library, and PR 4 must map its errors onto JSON-RPC codes by
+matching variants rather than parsing message strings.

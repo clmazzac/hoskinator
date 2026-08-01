@@ -12,7 +12,7 @@ by having been asked for at least once. See "Growing this guide" at the bottom.
 
 Say what the item does or what the rule is, then stop. Rationale — why it is that way, what it
 guards against, what the alternative was — goes in the commit message, the PR description, an ADR,
-or the `CLAUDE.md` decision log.
+or a decision log (`CLAUDE.md` for repo-wide, `docs/decisions/` per component).
 
 ```rust
 // No
