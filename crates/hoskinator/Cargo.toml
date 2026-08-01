@@ -6,4 +6,11 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
 hoskinator-core = { workspace = true }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
