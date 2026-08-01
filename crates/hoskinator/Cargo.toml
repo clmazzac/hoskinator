@@ -1,0 +1,9 @@
+[package]
+name = "hoskinator"
+description = "Git-native resume manager: HTTP daemon, CLI, and Web UI host in a single binary."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+hoskinator-core = { workspace = true }
