@@ -48,6 +48,20 @@ Do not pick libraries, frameworks, schema shapes, or API surfaces unilaterally. 
 trade-offs and get sign-off before writing code. Record what gets decided in `docs/decisions/`, or
 in the log below if it applies repo-wide.
 
+### Product design is the maintainer's, and is done by hand
+
+Layout, visual design, interaction, and user-facing wording are not generated. Cam produces them
+manually. This is a stronger rule than the one above: those decisions are not delegated even when
+options are offered.
+
+**Why:** AI is not yet good at product design, and design smuggled into an infrastructure PR is the
+hardest kind to catch — it arrives as working code with taste already baked in.
+
+**How to apply:** when a user-facing surface is needed before its design exists, build the smallest
+thing that proves the machinery and looks unfinished on purpose — raw data over an invented form.
+Never let a UI decision ride along in a PR that is nominally about something else. See
+`docs/decisions/web.md`.
+
 ## Decision log
 
 Decisions that apply across the whole repo, newest last. Decisions scoped to one component live in

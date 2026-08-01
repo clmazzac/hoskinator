@@ -72,6 +72,7 @@ fn router(store: Arc<Store>) -> Result<Router, ServeError> {
 
     Ok(Router::new()
         .route(RPC_PATH, post(dispatch))
+        .fallback(crate::web::asset)
         .layer(axum::middleware::from_fn(authenticate))
         .with_state(Arc::new(module)))
 }
