@@ -8,6 +8,10 @@ A git-native resume management system. Its core job is to manage all your resume
 The global, specialization-independent pool of every fact and accomplishment statement a user has accumulated — the "everything-CV." Authoritative for raw facts (orgs, dates, projects) and reusable raw material. _Not_ the source of truth for tailored wording.
 _Avoid_: source of truth (it is the source of truth only for facts, not wording), database.
 
+**Home**:
+The single directory holding Hoskinator's own data — the Master Store database. Resolved from `HOSKINATOR_HOME`, then the `home` key in the config file, then the platform data directory (`~/.local/share/hoskinator` on Linux); never from the current working directory, because Hoskinator is not a per-directory tool the way `git` is. The rendercv repo is _not_ inside Home: it is the user's own artifact, located separately so they can keep it wherever they like and push it to their own remote.
+_Avoid_: workspace (ambiguous with the Cargo sense — the repo is itself a Cargo workspace), data dir, root.
+
 **Entry**:
 A single record in the Master Store — a job, project, degree, publication, award, skill line, etc. Each Entry has a **type** mirroring rendercv's entry types (experience, education, normal, publication, one-line, bullet, text), which determines its fields and whether it carries bullets. Also carries section eligibility and (where applicable) bullets. (Tagging is a deferred post-v1 concept.)
 

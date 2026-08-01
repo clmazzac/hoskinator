@@ -5,3 +5,6 @@
 //!
 //! Contains no LLM code and reads no API key — this crate is fully functional standalone
 //! (ADR-0005).
+
+pub mod config;
+pub mod home;
