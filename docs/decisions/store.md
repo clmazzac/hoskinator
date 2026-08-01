@@ -51,3 +51,32 @@ buys no query power, and JSON preserves array order — which carries through to
 
 **Two constraints this imposes:** every field must be nullable, and the YAML writer must *omit*
 `None` rather than emit `null` or `""` — an empty string renders as a blank connection.
+
+## `email`, `phone`, and `website` preserve scalar-vs-list (Slice 1, #3)
+
+rendercv types these as `T | list[T] | None`. `OneOrMany<T>` round-trips whichever form the user
+wrote rather than normalising to a list.
+
+**Why:** normalising is not display-neutral. Rendering the same CV with `email: ada@example.com`
+against `email: [ada@example.com]` gives byte-identical Typst, PDF, and PNG — but the Markdown and
+HTML come out as `- Email: [['ada@example.com']](mailto:['ada@example.com'])`. rendercv's
+`markdown/Header.j2.md` interpolates `{{cv.email}}` as a scalar and never loops over it, unlike
+`social_networks` directly below it, so any list stringifies as a Python repr. HTML is generated
+from the Markdown, so one template breaks both.
+
+**Accepted cost:** every consumer handles two arms. Normalising would have broken Markdown and HTML
+for *every* user, since everyone has at least one email.
+
+**Not our bug to fix:** multi-value `email` is mangled the same way whatever we store — it is
+upstream, and it only affects Markdown and HTML.
+
+## `social_networks.network` is a Rust enum (Slice 1, #3)
+
+The seventeen names rendercv accepts, as `SocialNetworkName`, not a `String`.
+
+**Why:** it makes an invalid network unrepresentable and gives Slice 9's web UI its dropdown for
+free.
+
+**Accepted cost:** the drift ADR-0003 warns about — when rendercv adds a network, Hoskinator rejects
+YAML that is actually valid until the enum is bumped. A test pins all seventeen wire strings, and
+`Google Scholar`, `IMDB`, and `ORCID` need `serde(rename)` to match.

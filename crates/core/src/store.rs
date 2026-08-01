@@ -41,12 +41,30 @@ pub enum StoreError {
 
     #[error("could not read the store's schema version")]
     SchemaVersion(#[source] libsql::Error),
+
+    #[error("could not read the Profile")]
+    ReadProfile(#[source] libsql::Error),
+
+    #[error("could not write the Profile")]
+    WriteProfile(#[source] libsql::Error),
+
+    #[error("the stored Profile column `{column}` is not valid JSON")]
+    DecodeProfile {
+        column: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error("could not encode the Profile column `{column}`")]
+    EncodeProfile {
+        column: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 /// The Master Store: every fact and accomplishment statement the user has accumulated.
 pub struct Store {
-    // Only this module's tests read the connection so far, so a non-test build sees it as dead.
-    #[allow(dead_code)]
     connection: Connection,
 }
 
@@ -79,7 +97,6 @@ impl Store {
     }
 
     /// The underlying connection.
-    #[allow(dead_code)]
     pub(crate) fn connection(&self) -> &Connection {
         &self.connection
     }
