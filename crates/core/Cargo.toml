@@ -1,0 +1,8 @@
+[package]
+name = "hoskinator-core"
+description = "Hoskinator's core engine: the Master Store, git mediation, and the core JSON-RPC methods."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]

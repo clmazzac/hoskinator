@@ -83,3 +83,16 @@ one binary is daemon, CLI, and web host at once.
 
 **Note:** the package is `hoskinator-core`, not `core`, because a crate literally named `core`
 shadows Rust's built-in `core` and causes confusing resolution errors.
+
+### Toolchain: the whole repo tracks `stable` (Slice 1, #2)
+
+`rust-toolchain.toml` sets `channel = "stable"` with the `rustfmt` and `clippy` components, and CI
+uses the same channel rather than naming a version of its own.
+
+**Why:** an exact pin (`1.96.0`) would have had to be repeated in the CI workflow, because
+`dtolnay/rust-toolchain` does not read `rust-toolchain.toml` — its `toolchain` input just defaults
+to `stable`. Two copies of a version string drift, and when they drift CI silently tests a different
+compiler than the one used locally. One channel, named once, cannot.
+
+**Accepted cost:** a new stable release can introduce `clippy` lints that fail CI on a PR that did
+not change. The fix is to address the lint or bump the pin deliberately.
