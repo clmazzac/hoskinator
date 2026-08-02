@@ -29,3 +29,16 @@ constructor and a `pub(crate)` config enum. Checked against jsonrpsee 0.26.0's s
 
 So the choice is: no batching, hand-roll the array in the axum handler, or give up axum owning the
 port. v1 takes the first — nothing batches today, and both the CLI and the web UI make single calls.
+
+## The rendercv schema is vendored, not generated at test time (Slice 1, #2)
+
+`crates/core/tests/fixtures/rendercv-2.8-schema.json` is rendercv's own emitted JSON Schema,
+checked in and validated against in-process. An `#[ignore]`d test shells out to the real `rendercv`
+to confirm the installed version still matches the fixture.
+
+**Why:** ADR-0003 hand-encodes rendercv's schema as serde structs, so something has to catch the two
+drifting. Generating the schema in CI would mean a Python install and rendercv's full dependency
+tree on every PR.
+
+**Accepted cost:** the fixture goes stale silently. Nothing in CI notices a new rendercv; refreshing
+it is a manual step, and the ignored test only helps someone who runs it.
