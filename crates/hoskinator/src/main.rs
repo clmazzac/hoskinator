@@ -4,12 +4,17 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod cli;
 mod rpc;
 mod serve;
 
 #[derive(Parser)]
 #[command(name = "hoskinator", version, about, long_about = None)]
 struct Cli {
+    /// Port the daemon serves on.
+    #[arg(long, global = true, default_value_t = serve::DEFAULT_PORT)]
+    port: u16,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -17,25 +22,41 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Runs the daemon until interrupted.
-    Serve {
-        /// Port to bind on loopback.
-        #[arg(long, default_value_t = serve::DEFAULT_PORT)]
-        port: u16,
+    Serve,
+
+    /// Reads and writes the Profile.
+    Profile {
+        #[command(subcommand)]
+        action: ProfileAction,
     },
+}
+
+#[derive(Subcommand)]
+enum ProfileAction {
+    /// Prints the stored Profile as JSON.
+    Get,
+
+    /// Replaces the stored Profile with the JSON on standard input.
+    Set,
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let arguments = Cli::parse();
+    let port = arguments.port;
 
-    let result = match cli.command {
-        Command::Serve { port } => serve::run(port).await,
+    let result: Result<(), Box<dyn std::error::Error>> = match arguments.command {
+        Command::Serve => serve::run(port).await.map_err(Into::into),
+        Command::Profile { action } => match action {
+            ProfileAction::Get => cli::profile_get(port).await.map_err(Into::into),
+            ProfileAction::Set => cli::profile_set(port).await.map_err(Into::into),
+        },
     };
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            report(&error);
+            report(error.as_ref());
             ExitCode::FAILURE
         }
     }
@@ -64,18 +85,34 @@ mod tests {
     }
 
     #[test]
-    fn serve_defaults_to_the_documented_port() {
-        let cli = Cli::parse_from(["hoskinator", "serve"]);
+    fn the_port_defaults_to_the_documented_one() {
+        let arguments = Cli::parse_from(["hoskinator", "serve"]);
 
-        let Command::Serve { port } = cli.command;
-        assert_eq!(port, serve::DEFAULT_PORT);
+        assert_eq!(arguments.port, serve::DEFAULT_PORT);
     }
 
     #[test]
-    fn serve_accepts_an_explicit_port() {
-        let cli = Cli::parse_from(["hoskinator", "serve", "--port", "9000"]);
+    fn the_port_can_be_given_after_the_subcommand() {
+        let arguments = Cli::parse_from(["hoskinator", "profile", "get", "--port", "9000"]);
 
-        let Command::Serve { port } = cli.command;
-        assert_eq!(port, 9000);
+        assert_eq!(arguments.port, 9000);
+        assert!(matches!(
+            arguments.command,
+            Command::Profile {
+                action: ProfileAction::Get
+            }
+        ));
+    }
+
+    #[test]
+    fn profile_set_is_its_own_action() {
+        let arguments = Cli::parse_from(["hoskinator", "profile", "set"]);
+
+        assert!(matches!(
+            arguments.command,
+            Command::Profile {
+                action: ProfileAction::Set
+            }
+        ));
     }
 }

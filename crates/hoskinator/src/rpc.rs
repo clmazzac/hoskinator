@@ -19,7 +19,7 @@ pub const STORE_CORRUPT: i32 = -32002;
 /// The store was reached but the read or write failed.
 pub const STORE_IO: i32 = -32003;
 
-#[rpc(server)]
+#[rpc(server, client)]
 pub trait ProfileRpc {
     #[method(name = "profile.get")]
     async fn profile_get(&self) -> RpcResult<Profile>;

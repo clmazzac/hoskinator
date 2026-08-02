@@ -57,7 +57,10 @@ pub struct CustomConnection {
 }
 
 /// The singleton record of who the resumes belong to.
+///
+/// Every field is optional on the wire: an omitted field reads as unset.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Profile {
     pub name: Option<String>,
     pub headline: Option<String>,
