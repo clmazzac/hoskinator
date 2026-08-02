@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 mod cli;
 mod rpc;
 mod serve;
+mod web;
 
 #[derive(Parser)]
 #[command(name = "hoskinator", version, about, long_about = None)]

@@ -30,6 +30,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Before cargo: rust-embed compiles web/dist into the binary, so an unbuilt bundle
+      # would embed nothing and the web tests would skip rather than fail.
+      - name: Build the web shell
+        run: npm --prefix web ci && npm --prefix web run build
+
       - name: Format
         run: cargo fmt --all --check
 
