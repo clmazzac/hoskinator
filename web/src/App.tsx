@@ -106,6 +106,9 @@ export default function App() {
       setJobDescriptionStatus(deleted ? "Deleted." : "Job Description no longer exists.");
     } catch (error) {
       setJobDescriptionStatus(`Failed: ${(error as Error).message}`);
+    }
+  }
+
   async function callRepositoryRequest() {
     try {
       const request = JSON.parse(repositoryRequest);

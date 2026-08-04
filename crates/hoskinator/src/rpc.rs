@@ -82,6 +82,9 @@ pub trait JobDescriptionRpc {
 
     #[method(name = "jd.delete")]
     async fn jd_delete(&self, id: i64) -> RpcResult<bool>;
+}
+
+#[rpc(server, client)]
 pub trait RepositoryRpc {
     #[method(name = "repository.init")]
     async fn repository_init(&self) -> RpcResult<RepositoryState>;
@@ -269,25 +272,28 @@ impl JobDescriptionRpcServer for JobDescriptionApi {
         self.store
             .create_job_description(&job_description)
             .await
-            .map_err(rpc_error)
+            .map_err(store_rpc_error)
     }
 
     async fn jd_get(&self, id: i64) -> RpcResult<Option<JobDescription>> {
-        self.store.job_description(id).await.map_err(rpc_error)
+        self.store
+            .job_description(id)
+            .await
+            .map_err(store_rpc_error)
     }
 
     async fn jd_list(&self, query: Option<String>) -> RpcResult<Vec<JobDescription>> {
         self.store
             .job_descriptions(query.as_deref())
             .await
-            .map_err(rpc_error)
+            .map_err(store_rpc_error)
     }
 
     async fn jd_delete(&self, id: i64) -> RpcResult<bool> {
         self.store
             .delete_job_description(id)
             .await
-            .map_err(rpc_error)
+            .map_err(store_rpc_error)
     }
 }
 

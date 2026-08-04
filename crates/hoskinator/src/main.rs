@@ -93,6 +93,9 @@ enum JobDescriptionAction {
 
     /// Deletes one Job Description.
     Delete { id: i64 },
+}
+
+#[derive(Subcommand)]
 enum ProfileAction {
     /// Prints the stored Profile as JSON.
     Get,
@@ -149,6 +152,7 @@ async fn main() -> ExitCode {
             JobDescriptionAction::Delete { id } => {
                 cli::jd_delete(port, id).await.map_err(Into::into)
             }
+        },
         Command::Repository { action } => match action {
             RepositoryAction::Init => cli::repository_init(port).await.map_err(Into::into),
             RepositoryAction::Branch { name } => {
@@ -332,6 +336,7 @@ mod tests {
                 action: JobDescriptionAction::Delete { id: 17 }
             }
         ));
+    }
 
     #[test]
     fn repository_commands_accept_the_documented_forms() {

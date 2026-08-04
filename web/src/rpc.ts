@@ -100,6 +100,8 @@ export function listJobDescriptions(
 
 export function deleteJobDescription(id: number): Promise<boolean> {
   return call("jd.delete", [id]);
+}
+
 export interface Head { branch: string | null; commit_id: string | null }
 export interface Branch { name: string; commit_id: string | null; is_head: boolean }
 export interface RepositoryState { head: Head | null; branches: Branch[] }

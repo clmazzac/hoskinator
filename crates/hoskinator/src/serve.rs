@@ -379,6 +379,7 @@ mod tests {
         )
         .await;
         assert!(missing["result"].is_null());
+    }
 
     #[tokio::test]
     async fn repository_methods_are_available_over_json_rpc() {
