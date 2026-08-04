@@ -4,10 +4,11 @@
 //! store (ADR-0003).
 
 use hoskinator_core::profile::Profile;
+use hoskinator_core::section::{EntryType, Section};
 use jsonrpsee::core::client::Error as ClientError;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
-use crate::rpc::ProfileRpcClient;
+use crate::rpc::{ProfileRpcClient, SectionRpcClient};
 
 /// A command could not be carried out.
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +56,85 @@ pub async fn profile_set(port: u16) -> Result<(), CliError> {
         .await
         .map_err(|source| classify(source, port))
 }
+
+/// Creates a section and prints the stored record.
+pub async fn section_create(port: u16, name: &str, entry_type: EntryType) -> Result<(), CliError> {
+    let section = client(port)?
+        .section_create(name.to_owned(), entry_type)
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print!("{}", table(&[section]));
+    Ok(())
+}
+
+/// Prints every section.
+pub async fn section_list(port: u16) -> Result<(), CliError> {
+    let sections = client(port)?
+        .section_list()
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print!("{}", table(&sections));
+    Ok(())
+}
+
+/// Renames a section and prints the stored record.
+pub async fn section_rename(port: u16, name: &str, new_name: &str) -> Result<(), CliError> {
+    let section = client(port)?
+        .section_update(name.to_owned(), Some(new_name.to_owned()), None)
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print!("{}", table(&[section]));
+    Ok(())
+}
+
+/// Changes a section's entry type and prints the stored record.
+pub async fn section_retype(port: u16, name: &str, entry_type: EntryType) -> Result<(), CliError> {
+    let section = client(port)?
+        .section_update(name.to_owned(), None, Some(entry_type))
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print!("{}", table(&[section]));
+    Ok(())
+}
+
+/// Deletes a section.
+pub async fn section_delete(port: u16, name: &str) -> Result<(), CliError> {
+    client(port)?
+        .section_delete(name.to_owned())
+        .await
+        .map_err(|source| classify(source, port))
+}
+
+/// Renders sections as a two-column table, or the empty string when there are none.
+fn table(sections: &[Section]) -> String {
+    if sections.is_empty() {
+        return String::new();
+    }
+
+    let width = sections
+        .iter()
+        .map(|section| section.name.chars().count())
+        .chain(std::iter::once(NAME_HEADING.len()))
+        .max()
+        .unwrap_or(NAME_HEADING.len());
+
+    let mut rendered = format!("{NAME_HEADING:<width$}  {TYPE_HEADING}\n");
+    for section in sections {
+        rendered.push_str(&format!(
+            "{:<width$}  {}\n",
+            section.name, section.entry_type
+        ));
+    }
+
+    rendered
+}
+
+const NAME_HEADING: &str = "NAME";
+const TYPE_HEADING: &str = "ENTRY TYPE";
 
 fn read_profile(mut input: impl std::io::Read) -> Result<Profile, CliError> {
     let mut text = String::new();
@@ -114,6 +194,58 @@ mod tests {
         let error = read_profile("not json".as_bytes()).unwrap_err();
 
         assert!(matches!(error, CliError::ParseInput(_)), "got {error:?}");
+    }
+
+    fn section(name: &str, entry_type: EntryType) -> Section {
+        Section {
+            name: name.into(),
+            entry_type,
+        }
+    }
+
+    #[test]
+    fn the_table_heads_each_column() {
+        let rendered = table(&[section("Experience", EntryType::Experience)]);
+
+        assert_eq!(rendered.lines().next(), Some("NAME        ENTRY TYPE"));
+    }
+
+    #[test]
+    fn the_name_column_fits_the_longest_name() {
+        let rendered = table(&[
+            section("Experience", EntryType::Experience),
+            section("Selected Projects", EntryType::Normal),
+        ]);
+
+        let starts: Vec<usize> = rendered
+            .lines()
+            .map(|line| {
+                line.find("ENTRY TYPE")
+                    .or_else(|| line.rfind("  ").map(|at| at + 2))
+            })
+            .map(|at| at.expect("a second column"))
+            .collect();
+
+        assert!(
+            starts.windows(2).all(|pair| pair[0] == pair[1]),
+            "columns are ragged: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn a_name_shorter_than_the_heading_still_lines_up() {
+        let rendered = table(&[section("X", EntryType::Text)]);
+
+        let mut lines = rendered.lines();
+        let heading = lines.next().unwrap();
+        let row = lines.next().unwrap();
+
+        assert_eq!(heading.find("ENTRY TYPE"), row.find("text"));
+    }
+
+    #[test]
+    fn no_sections_render_as_nothing() {
+        assert_eq!(table(&[]), "");
     }
 
     #[test]
