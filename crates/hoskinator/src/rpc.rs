@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use hoskinator_core::profile::Profile;
-use hoskinator_core::section::SectionError;
+use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
@@ -35,6 +35,26 @@ pub trait ProfileRpc {
     async fn profile_set(&self, profile: Profile) -> RpcResult<()>;
 }
 
+#[rpc(server, client)]
+pub trait SectionRpc {
+    #[method(name = "section.create")]
+    async fn section_create(&self, name: String, entry_type: EntryType) -> RpcResult<Section>;
+
+    #[method(name = "section.list")]
+    async fn section_list(&self) -> RpcResult<Vec<Section>>;
+
+    #[method(name = "section.update")]
+    async fn section_update(
+        &self,
+        name: String,
+        new_name: Option<String>,
+        entry_type: Option<EntryType>,
+    ) -> RpcResult<Section>;
+
+    #[method(name = "section.delete")]
+    async fn section_delete(&self, name: String) -> RpcResult<()>;
+}
+
 /// Serves the Profile methods from one store.
 pub struct ProfileApi {
     store: Arc<Store>,
@@ -43,6 +63,47 @@ pub struct ProfileApi {
 impl ProfileApi {
     pub fn new(store: Arc<Store>) -> Self {
         Self { store }
+    }
+}
+
+/// Serves the Section methods from one store.
+pub struct SectionApi {
+    store: Arc<Store>,
+}
+
+impl SectionApi {
+    pub fn new(store: Arc<Store>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl SectionRpcServer for SectionApi {
+    async fn section_create(&self, name: String, entry_type: EntryType) -> RpcResult<Section> {
+        self.store
+            .create_section(&name, entry_type)
+            .await
+            .map_err(rpc_error)
+    }
+
+    async fn section_list(&self) -> RpcResult<Vec<Section>> {
+        self.store.sections().await.map_err(rpc_error)
+    }
+
+    async fn section_update(
+        &self,
+        name: String,
+        new_name: Option<String>,
+        entry_type: Option<EntryType>,
+    ) -> RpcResult<Section> {
+        self.store
+            .update_section(&name, new_name.as_deref(), entry_type)
+            .await
+            .map_err(rpc_error)
+    }
+
+    async fn section_delete(&self, name: String) -> RpcResult<()> {
+        self.store.delete_section(&name).await.map_err(rpc_error)
     }
 }
 
