@@ -2,7 +2,9 @@
 //!
 //! Numbered SQL files applied in order, with `PRAGMA user_version` recording which have run.
 
-use libsql::Connection;
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
+use diesel::sql_types::BigInt;
 
 use super::StoreError;
 
@@ -33,44 +35,40 @@ struct Migration {
 #[allow(dead_code)]
 pub(super) const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;
 
+/// One row of `PRAGMA user_version`.
+#[derive(QueryableByName)]
+struct UserVersion {
+    #[diesel(sql_type = BigInt)]
+    user_version: i64,
+}
+
 /// Applies every migration the database has not yet seen.
-pub(super) async fn apply(connection: &Connection) -> Result<(), StoreError> {
-    let current = schema_version(connection).await?;
+pub(super) fn apply(connection: &mut SqliteConnection) -> Result<(), StoreError> {
+    let current = schema_version(connection)?;
 
     for migration in MIGRATIONS.iter().filter(|m| m.version > current) {
-        let migrate_error = |source| StoreError::Migrate {
-            version: migration.version,
-            source,
-        };
-
         // A migration and the version that records it must land together, or a later open would
         // replay a migration that has already run.
         connection
-            .execute_batch(&format!(
+            .batch_execute(&format!(
                 "BEGIN;\n{}\nPRAGMA user_version = {};\nCOMMIT;",
                 migration.sql, migration.version
             ))
-            .await
-            .map_err(migrate_error)?;
+            .map_err(|source| StoreError::Migrate {
+                version: migration.version,
+                source,
+            })?;
     }
 
     Ok(())
 }
 
 /// The version recorded in the database, or 0 for one that has never been migrated.
-async fn schema_version(connection: &Connection) -> Result<i64, StoreError> {
-    let mut rows = connection
-        .query("PRAGMA user_version", ())
-        .await
-        .map_err(StoreError::SchemaVersion)?;
-
-    let row = rows
-        .next()
-        .await
-        .map_err(StoreError::SchemaVersion)?
-        .ok_or_else(|| StoreError::SchemaVersion(libsql::Error::QueryReturnedNoRows))?;
-
-    row.get::<i64>(0).map_err(StoreError::SchemaVersion)
+pub(super) fn schema_version(connection: &mut SqliteConnection) -> Result<i64, StoreError> {
+    diesel::sql_query("PRAGMA user_version")
+        .get_result::<UserVersion>(connection)
+        .map(|row| row.user_version)
+        .map_err(StoreError::SchemaVersion)
 }
 
 #[cfg(test)]

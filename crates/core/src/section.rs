@@ -1,7 +1,9 @@
 //! Sections: the managed `{ name, entry_type }` vocabulary of the Master Store.
 
+use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::store::schema::section as section_table;
 use crate::store::{Store, StoreError};
 
 /// A section was rejected before it reached the store.
@@ -89,6 +91,26 @@ pub struct Section {
     pub entry_type: EntryType,
 }
 
+/// A stored section, before its `entry_type` is parsed.
+#[derive(Queryable, Selectable, Insertable)]
+#[diesel(table_name = section_table)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+struct SectionRow {
+    name: String,
+    entry_type: String,
+}
+
+impl TryFrom<SectionRow> for Section {
+    type Error = StoreError;
+
+    fn try_from(row: SectionRow) -> Result<Self, Self::Error> {
+        Ok(Section {
+            name: row.name,
+            entry_type: row.entry_type.parse()?,
+        })
+    }
+}
+
 impl Store {
     /// Creates a section.
     pub async fn create_section(
@@ -102,49 +124,53 @@ impl Store {
             return Err(SectionError::DuplicateName { name }.into());
         }
 
-        self.connection()
-            .execute(
-                "INSERT INTO section (name, entry_type) VALUES (?, ?)",
-                (name.clone(), entry_type.as_str()),
-            )
-            .await
-            .map_err(StoreError::WriteSection)?;
+        let row = SectionRow {
+            name: name.clone(),
+            entry_type: entry_type.to_string(),
+        };
+
+        self.with_connection(move |connection| {
+            diesel::insert_into(section_table::table)
+                .values(row)
+                .execute(connection)
+                .map_err(StoreError::WriteSection)
+        })
+        .await?;
 
         Ok(Section { name, entry_type })
     }
 
     /// Reads one section by name.
     pub async fn section(&self, name: &str) -> Result<Option<Section>, StoreError> {
-        let mut rows = self
-            .connection()
-            .query(
-                "SELECT name, entry_type FROM section WHERE name = ?",
-                [name],
-            )
-            .await
-            .map_err(StoreError::ReadSection)?;
+        let name = name.to_string();
 
-        let Some(row) = rows.next().await.map_err(StoreError::ReadSection)? else {
-            return Ok(None);
-        };
+        let row = self
+            .with_connection(move |connection| {
+                section_table::table
+                    .find(name)
+                    .select(SectionRow::as_select())
+                    .first(connection)
+                    .optional()
+                    .map_err(StoreError::ReadSection)
+            })
+            .await?;
 
-        decode(&row).map(Some)
+        row.map(Section::try_from).transpose()
     }
 
     /// Every section, ordered by name.
     pub async fn sections(&self) -> Result<Vec<Section>, StoreError> {
-        let mut rows = self
-            .connection()
-            .query("SELECT name, entry_type FROM section ORDER BY name", ())
-            .await
-            .map_err(StoreError::ReadSection)?;
+        let rows = self
+            .with_connection(|connection| {
+                section_table::table
+                    .order(section_table::name)
+                    .select(SectionRow::as_select())
+                    .load(connection)
+                    .map_err(StoreError::ReadSection)
+            })
+            .await?;
 
-        let mut sections = Vec::new();
-        while let Some(row) = rows.next().await.map_err(StoreError::ReadSection)? {
-            sections.push(decode(&row)?);
-        }
-
-        Ok(sections)
+        rows.into_iter().map(Section::try_from).collect()
     }
 
     /// Renames a section, retypes it, or both.
@@ -173,28 +199,36 @@ impl Store {
             return Err(SectionError::DuplicateName { name: updated.name }.into());
         }
 
-        self.connection()
-            .execute(
-                "UPDATE section SET name = ?, entry_type = ? WHERE name = ?",
-                (
-                    updated.name.clone(),
-                    updated.entry_type.as_str(),
-                    current.name,
-                ),
-            )
-            .await
-            .map_err(StoreError::WriteSection)?;
+        let new_name = updated.name.clone();
+        let new_entry_type = updated.entry_type.to_string();
+
+        // Set column by column rather than from a changeset struct: `name` is the primary key,
+        // which `AsChangeset` skips, and a rename is exactly a change to it.
+        self.with_connection(move |connection| {
+            diesel::update(section_table::table.find(current.name))
+                .set((
+                    section_table::name.eq(new_name),
+                    section_table::entry_type.eq(new_entry_type),
+                ))
+                .execute(connection)
+                .map_err(StoreError::WriteSection)
+        })
+        .await?;
 
         Ok(updated)
     }
 
     /// Deletes a section.
     pub async fn delete_section(&self, name: &str) -> Result<(), StoreError> {
+        let target = name.to_string();
+
         let deleted = self
-            .connection()
-            .execute("DELETE FROM section WHERE name = ?", [name])
-            .await
-            .map_err(StoreError::WriteSection)?;
+            .with_connection(move |connection| {
+                diesel::delete(section_table::table.find(target))
+                    .execute(connection)
+                    .map_err(StoreError::WriteSection)
+            })
+            .await?;
 
         if deleted == 0 {
             return Err(SectionError::NoSuchSection {
@@ -216,16 +250,6 @@ fn clean_name(name: &str) -> Result<String, SectionError> {
     }
 
     Ok(name.to_string())
-}
-
-fn decode(row: &libsql::Row) -> Result<Section, StoreError> {
-    let name = row.get::<String>(0).map_err(StoreError::ReadSection)?;
-    let entry_type = row.get::<String>(1).map_err(StoreError::ReadSection)?;
-
-    Ok(Section {
-        name,
-        entry_type: entry_type.parse()?,
-    })
 }
 
 #[cfg(test)]
