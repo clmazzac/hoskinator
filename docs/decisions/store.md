@@ -5,6 +5,8 @@ Decisions shaping `hoskinator-core`'s store layer, newest last. Repo-wide decisi
 
 ## Store client: the `libsql` crate (Slice 1, #2)
 
+**Superseded by ADR-0007.** Kept for the record.
+
 **Why:** the only client that is actually libSQL, matching the PRD and #2 as written, and it keeps
 the deferred Turso sync a config change rather than a port.
 
@@ -16,6 +18,9 @@ real test coverage to compensate.
 
 `hoskinator-core`'s public store API is `async`, and the crate exposes a `Store` owning a single
 libSQL `Connection`, shared as `Arc<Store>`. WAL mode is set at initialisation.
+
+**Amended by ADR-0007:** the connection is a `SqliteConnection` behind an `Arc<Mutex<_>>`, and the
+async API runs it on `spawn_blocking`. The API shape below is unchanged.
 
 **Why async:** `libsql` is async and axum is async, so the daemon composes without an adapter. A sync
 wrapper would have to `block_on` internally, which panics when called from a tokio worker thread —
@@ -31,6 +36,10 @@ of magnitude.
 ## Migrations: numbered SQL files + `PRAGMA user_version` (Slice 1, #3)
 
 Embedded `.sql` files applied in order, with `user_version` recording what has run.
+
+**Still true after ADR-0007**, for a different reason: `diesel_migrations` would work now, but it
+records applied migrations in its own table, so switching would tell every existing database that
+nothing had run.
 
 **Why:** near-forced — no migration crate supports libSQL. `refinery`'s driver features are
 `rusqlite`, `postgres`, `mysql`, `tokio-postgres`, `mysql_async`, and `tiberius` (checked against its
@@ -152,13 +161,31 @@ it runs. Four things it depends on, none of them enforced by the compiler:
 4. **Placeholder arity.** The `?` count must match the parameter tuple; a mismatch is a runtime
    error.
 
-**Why it stands:** the `libsql` decision at the top of this file already accepted the cost — no
-compile-time SQL verification — and named the compensation: real test coverage of the store. Every
-query above is exercised by a test against a migrated database.
+**Resolved by ADR-0007 and the section below.** Kept for the record: it states what the migration to
+Diesel was bought to fix.
 
-**Why it is not simply fixed:** `sqlx` is the crate that offers compile-time verification, and it
-ships its own SQLite driver (`sqlx-sqlite`). Adopting it means that driver in place of `libsql`,
-which was chosen to keep the deferred Turso sync a config change rather than a port. That trade is a
-decision, not a refactor.
+## What replaces the hand-written SQL (#43)
 
-**Tracked in #43.**
+Every query is now built by Diesel from `crates/core/src/store/schema.rs`, which declares each table
+and column. That answers all four dependencies above:
+
+1. **Positional decoding is gone.** `Profile` and `Section` derive `Selectable` and are read with
+   `as_select()`, which builds the `SELECT` list from the struct's field names. Reordering the
+   columns in `schema.rs` changes nothing.
+2. **Names are checked, not retyped.** A column that `schema.rs` does not declare is a compile
+   error, and a column `schema.rs` declares that the migrations never created fails
+   `every_declared_column_exists_after_migrating`.
+3. **Types are checked at build time.** `check_for_backend(Sqlite)` on each row struct rejects a
+   Rust field whose type does not match the SQL type declared for its column.
+4. **Arity cannot mismatch.** There are no placeholders to count.
+
+**What is still not checked:** a column added by a migration but never declared in `schema.rs`. The
+drift test selects what Diesel knows about, so it sees a missing column and not a surplus one. Such
+a column is invisible to the store rather than wrong, which is why it is left.
+
+**Two costs, both recorded in ADR-0007:** the deferred Turso sync becomes a port, and the store's
+async API is now `spawn_blocking` over a synchronous connection.
+
+**One trap worth naming:** `AsChangeset` skips the primary key. `section.name` *is* the primary key,
+so `update_section` sets its columns one by one rather than from a changeset struct — otherwise a
+rename would silently do nothing.
