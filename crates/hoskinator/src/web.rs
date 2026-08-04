@@ -36,9 +36,33 @@ pub async fn asset(uri: Uri) -> Response {
 mod tests {
     use super::*;
 
+    use hoskinator_core::section::EntryType;
+
     /// Whether the bundle was built when this binary was compiled.
     fn is_built() -> bool {
         Assets::get("index.html").is_some()
+    }
+
+    /// The shell's JSON-RPC client, which lists the entry types in TypeScript.
+    const RPC_TS: &str = include_str!("../../../web/src/rpc.ts");
+
+    #[test]
+    fn the_shell_lists_the_same_entry_types_as_rust() {
+        let listed: Vec<&str> = RPC_TS
+            .split_once("ENTRY_TYPES = [")
+            .expect("an ENTRY_TYPES array")
+            .1
+            .split_once(']')
+            .expect("a closing bracket")
+            .0
+            .split(',')
+            .map(|entry| entry.trim().trim_matches('"'))
+            .filter(|entry| !entry.is_empty())
+            .collect();
+
+        let owned: Vec<&str> = EntryType::ALL.iter().map(|kind| kind.as_str()).collect();
+
+        assert_eq!(listed, owned);
     }
 
     #[tokio::test]
