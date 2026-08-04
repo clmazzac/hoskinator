@@ -2,7 +2,9 @@
 
 use std::process::ExitCode;
 
+use clap::builder::TypedValueParser;
 use clap::{Parser, Subcommand};
+use hoskinator_core::section::EntryType;
 
 mod cli;
 mod rpc;
@@ -30,6 +32,41 @@ enum Command {
         #[command(subcommand)]
         action: ProfileAction,
     },
+
+    /// Creates, lists, and edits Sections.
+    Section {
+        #[command(subcommand)]
+        action: SectionAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SectionAction {
+    /// Creates a section.
+    Create {
+        name: String,
+
+        /// Entry shape the section holds.
+        #[arg(long = "type", value_name = "ENTRY_TYPE", value_parser = entry_type_parser())]
+        entry_type: EntryType,
+    },
+
+    /// Prints every section.
+    List,
+
+    /// Renames a section.
+    Rename { name: String, new_name: String },
+
+    /// Changes a section's entry type.
+    Retype {
+        name: String,
+
+        #[arg(value_name = "ENTRY_TYPE", value_parser = entry_type_parser())]
+        entry_type: EntryType,
+    },
+
+    /// Deletes a section.
+    Delete { name: String },
 }
 
 #[derive(Subcommand)]
@@ -52,6 +89,25 @@ async fn main() -> ExitCode {
             ProfileAction::Get => cli::profile_get(port).await.map_err(Into::into),
             ProfileAction::Set => cli::profile_set(port).await.map_err(Into::into),
         },
+        Command::Section { action } => match action {
+            SectionAction::Create { name, entry_type } => {
+                cli::section_create(port, &name, entry_type)
+                    .await
+                    .map_err(Into::into)
+            }
+            SectionAction::List => cli::section_list(port).await.map_err(Into::into),
+            SectionAction::Rename { name, new_name } => cli::section_rename(port, &name, &new_name)
+                .await
+                .map_err(Into::into),
+            SectionAction::Retype { name, entry_type } => {
+                cli::section_retype(port, &name, entry_type)
+                    .await
+                    .map_err(Into::into)
+            }
+            SectionAction::Delete { name } => {
+                cli::section_delete(port, &name).await.map_err(Into::into)
+            }
+        },
     };
 
     match result {
@@ -61,6 +117,12 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Accepts the nine entry types by name, and lists them in `--help`.
+fn entry_type_parser() -> impl TypedValueParser<Value = EntryType> {
+    clap::builder::PossibleValuesParser::new(EntryType::ALL.map(EntryType::as_str))
+        .map(|value| value.parse::<EntryType>().expect("clap checked the value"))
 }
 
 /// Prints an error with everything that caused it, innermost last.
@@ -83,6 +145,73 @@ mod tests {
     #[test]
     fn the_command_line_is_internally_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn a_section_is_created_with_its_type_behind_a_flag() {
+        let arguments = Cli::parse_from([
+            "hoskinator",
+            "section",
+            "create",
+            "Selected Projects",
+            "--type",
+            "normal",
+        ]);
+
+        let Command::Section {
+            action: SectionAction::Create { name, entry_type },
+        } = arguments.command
+        else {
+            panic!("expected a section create");
+        };
+        assert_eq!(name, "Selected Projects");
+        assert_eq!(entry_type, EntryType::Normal);
+    }
+
+    #[test]
+    fn renaming_takes_the_old_name_then_the_new() {
+        let arguments =
+            Cli::parse_from(["hoskinator", "section", "rename", "Projects", "Selected"]);
+
+        let Command::Section {
+            action: SectionAction::Rename { name, new_name },
+        } = arguments.command
+        else {
+            panic!("expected a section rename");
+        };
+        assert_eq!((name.as_str(), new_name.as_str()), ("Projects", "Selected"));
+    }
+
+    #[test]
+    fn every_entry_type_is_accepted_on_the_command_line() {
+        for entry_type in EntryType::ALL {
+            let arguments = Cli::parse_from([
+                "hoskinator",
+                "section",
+                "retype",
+                "Writing",
+                entry_type.as_str(),
+            ]);
+
+            let Command::Section {
+                action:
+                    SectionAction::Retype {
+                        entry_type: parsed, ..
+                    },
+            } = arguments.command
+            else {
+                panic!("expected a section retype");
+            };
+            assert_eq!(parsed, entry_type);
+        }
+    }
+
+    #[test]
+    fn an_entry_type_rendercv_does_not_have_is_refused() {
+        let refused =
+            Cli::try_parse_from(["hoskinator", "section", "retype", "Writing", "timeline"]);
+
+        assert!(refused.is_err(), "an unknown entry type should not parse");
     }
 
     #[test]
