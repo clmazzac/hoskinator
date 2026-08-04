@@ -42,6 +42,23 @@ the PR description, an ADR, or a decision log, not inline.
 **Why:** reasoning inline reads as padding, and it goes stale in the place least likely to be
 reread. One line that is true beats three that explain themselves.
 
+### Prose goes through the `orwell-writing` skill
+
+Invoke `orwell-writing` before writing commit messages, PR descriptions, and the markdown under
+`docs/`, `CLAUDE.md`, and `CONTEXT.md`.
+
+**Not** doc comments, and not code. Doc comments are governed by "Doc comments state the rule, not
+the reasoning" above and by rule 1 of `docs/STYLE.md`, which is stricter and more specific than the
+skill; running both over one line produces churn, not clarity.
+
+**`docs/STYLE.md` wins wherever the two disagree.** In particular, the skill's ASD-STE100 baseline
+asks for American spelling, and this repo writes British — `normalising` in
+`docs/decisions/store.md`, `serialises` in `crates/core/src/profile.rs`, `optimise` above. Do not
+"correct" them.
+
+**Why here rather than a hook:** a hook that restates this would be a second copy of the rule, in a
+file nobody reads, that drifts from this one.
+
 ### Implementation decisions are the maintainer's call
 
 Do not pick libraries, frameworks, schema shapes, or API surfaces unilaterally. Propose options with
