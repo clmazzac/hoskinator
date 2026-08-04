@@ -3,48 +3,32 @@
 Decisions shaping `hoskinator-core`'s store layer, newest last. Repo-wide decisions live in
 `CLAUDE.md`; architectural ones in `docs/adr/`.
 
-## Store client: the `libsql` crate (Slice 1, #2)
-
-**Superseded by ADR-0007.** Kept for the record.
-
-**Why:** the only client that is actually libSQL, matching the PRD and #2 as written, and it keeps
-the deferred Turso sync a config change rather than a port.
-
-**Accepted costs:** youngest of the candidates, thinner docs, and no compile-time SQL verification
-(`sqlx` was the alternative that offered it) — SQL errors surface at runtime, so store code needs
-real test coverage to compensate.
-
 ## The store API is async, behind one `Arc<Store>` (Slice 1, #3)
 
 `hoskinator-core`'s public store API is `async`, and the crate exposes a `Store` owning a single
-libSQL `Connection`, shared as `Arc<Store>`. WAL mode is set at initialisation.
+`SqliteConnection`, shared as `Arc<Store>`. WAL mode is set at initialisation.
 
-**Amended by ADR-0007:** the connection is a `SqliteConnection` behind an `Arc<Mutex<_>>`, and the
-async API runs it on `spawn_blocking`. The API shape below is unchanged.
+**Why async:** axum is async, so the daemon composes without an adapter. A sync wrapper would have to
+`block_on` internally, which panics when called from a tokio worker thread — a runtime failure rather
+than a compile error. Local SQLite I/O is blocking underneath, and Diesel's SQLite backend is
+synchronous, so the connection sits behind an `Arc<Mutex<_>>` and every query runs on
+`spawn_blocking`. Async buys nothing today; it pays off for a remote database later, and for holding
+many AI calls in flight.
 
-**Why async:** `libsql` is async and axum is async, so the daemon composes without an adapter. A sync
-wrapper would have to `block_on` internally, which panics when called from a tokio worker thread —
-a runtime failure rather than a compile error. Local SQLite I/O is blocking underneath, so async buys
-nothing today; it pays off for Turso remote later, and for holding many AI calls in flight.
-
-**Why one handle, not a pool:** ADR-0003 says the engine owns the single connection, and `Connection`
-is already `Clone + Send + Sync`. It also keeps pooling *reversible* — `Store`'s internals can grow a
-pool with no call-site changes, whereas passing a connection per call would put it in every
-signature. For bulk work the bottleneck is LLM API latency, not the database, by roughly three orders
-of magnitude.
+**Why one handle, not a pool:** ADR-0003 says the engine owns the single connection. It also keeps
+pooling *reversible* — `Store`'s internals can grow a pool with no call-site changes, whereas passing
+a connection per call would put it in every signature. For bulk work the bottleneck is LLM API
+latency, not the database, by roughly three orders of magnitude.
 
 ## Migrations: numbered SQL files + `PRAGMA user_version` (Slice 1, #3)
 
 Embedded `.sql` files applied in order, with `user_version` recording what has run.
 
-**Still true after ADR-0007**, for a different reason: `diesel_migrations` would work now, but it
-records applied migrations in its own table, so switching would tell every existing database that
-nothing had run.
+**Why not `diesel_migrations`:** it records applied migrations in its own table, so adopting it would
+tell every existing database that nothing had run.
 
-**Why:** near-forced — no migration crate supports libSQL. `refinery`'s driver features are
-`rusqlite`, `postgres`, `mysql`, `tokio-postgres`, `mysql_async`, and `tiberius` (checked against its
-`Cargo.toml`); `sqlx::migrate` requires sqlx itself. Idempotent `CREATE TABLE IF NOT EXISTS` was rejected because later slices add FTS5 tables
-that must be created *and backfilled* on databases that already hold data.
+**Why not idempotent `CREATE TABLE IF NOT EXISTS`:** later slices add FTS5 tables that must be
+created *and backfilled* on databases that already hold data.
 
 ## Profile mirrors the whole `cv:` header (Slice 1, #3)
 
@@ -146,45 +130,23 @@ that stores its rendercv fragment verbatim would serve them.
 Deliberately not built: nothing needs it before assembly (#10), and it is a user-facing surface, so
 its design is the maintainer's.
 
-## What the hand-written SQL rests on (Slice 2, #3)
+## Every query is built by Diesel (#43)
 
-Every query in `hoskinator-core` is a hand-written string passed to `libsql`. Nothing checks it until
-it runs. Four things it depends on, none of them enforced by the compiler:
+Diesel builds each query from `crates/core/src/store/schema.rs`, which declares every table and
+column. See ADR-0007. What that buys:
 
-1. **Positional decoding.** `row.get::<T>(index)` is tied to the order of the `SELECT` list.
-   `Profile` reads nine columns by index in `column`/`json_column`, in a different function from the
-   query itself; adding or reordering a column in the `SELECT` silently shifts every index after it.
-   `Section::decode` has the same coupling over two columns.
-2. **Names matching the migrations by hand.** Table and column names are repeated in the query
-   strings, and nothing ties them to `migrations/*.sql`.
-3. **Runtime type agreement.** `STRICT` tables reject a wrong type, but at execution, not at build.
-4. **Placeholder arity.** The `?` count must match the parameter tuple; a mismatch is a runtime
-   error.
-
-**Resolved by ADR-0007 and the section below.** Kept for the record: it states what the migration to
-Diesel was bought to fix.
-
-## What replaces the hand-written SQL (#43)
-
-Every query is now built by Diesel from `crates/core/src/store/schema.rs`, which declares each table
-and column. That answers all four dependencies above:
-
-1. **Positional decoding is gone.** `Profile` and `Section` derive `Selectable` and are read with
+1. **Rows decode by name.** `Profile` and `Section` derive `Selectable` and are read with
    `as_select()`, which builds the `SELECT` list from the struct's field names. Reordering the
    columns in `schema.rs` changes nothing.
-2. **Names are checked, not retyped.** A column that `schema.rs` does not declare is a compile
-   error, and a column `schema.rs` declares that the migrations never created fails
+2. **Column names are checked, not retyped.** A column that `schema.rs` does not declare is a
+   compile error, and a column `schema.rs` declares that the migrations never created fails
    `every_declared_column_exists_after_migrating`.
 3. **Types are checked at build time.** `check_for_backend(Sqlite)` on each row struct rejects a
    Rust field whose type does not match the SQL type declared for its column.
-4. **Arity cannot mismatch.** There are no placeholders to count.
 
 **What is still not checked:** a column added by a migration but never declared in `schema.rs`. The
 drift test selects what Diesel knows about, so it sees a missing column and not a surplus one. Such
 a column is invisible to the store rather than wrong, which is why it is left.
-
-**Two costs, both recorded in ADR-0007:** the deferred Turso sync becomes a port, and the store's
-async API is now `spawn_blocking` over a synchronous connection.
 
 **One trap worth naming:** `AsChangeset` skips the primary key. `section.name` *is* the primary key,
 so `update_section` sets its columns one by one rather than from a changeset struct — otherwise a
