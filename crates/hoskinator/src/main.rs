@@ -17,7 +17,6 @@ struct Cli {
     /// Port the daemon serves on.
     #[arg(long, global = true, default_value_t = serve::DEFAULT_PORT)]
     port: u16,
-
     #[command(subcommand)]
     command: Command,
 }
@@ -26,7 +25,6 @@ struct Cli {
 enum Command {
     /// Runs the daemon until interrupted.
     Serve,
-
     /// Reads and writes the Profile.
     Profile {
         #[command(subcommand)]
@@ -45,15 +43,12 @@ enum Command {
         #[command(subcommand)]
         action: JobDescriptionAction,
     },
-}
 
-#[derive(Subcommand)]
-enum ProfileAction {
-    /// Prints the stored Profile as JSON.
-    Get,
-
-    /// Replaces the stored Profile with the JSON on standard input.
-    Set,
+    /// Operates on the configured resume repository.
+    Repository {
+        #[command(subcommand)]
+        action: RepositoryAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -98,13 +93,28 @@ enum JobDescriptionAction {
 
     /// Deletes one Job Description.
     Delete { id: i64 },
+enum ProfileAction {
+    /// Prints the stored Profile as JSON.
+    Get,
+    /// Replaces the stored Profile with the JSON on standard input.
+    Set,
+}
+
+#[derive(Subcommand)]
+enum RepositoryAction {
+    Init,
+    Branch { name: String },
+    Checkout { branch: String },
+    Commit { message: String },
+    Status,
+    Diff,
+    Log,
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let arguments = Cli::parse();
     let port = arguments.port;
-
     let result: Result<(), Box<dyn std::error::Error>> = match arguments.command {
         Command::Serve => serve::run(port).await.map_err(Into::into),
         Command::Profile { action } => match action {
@@ -139,9 +149,16 @@ async fn main() -> ExitCode {
             JobDescriptionAction::Delete { id } => {
                 cli::jd_delete(port, id).await.map_err(Into::into)
             }
+        Command::Repository { action } => match action {
+            RepositoryAction::Init => cli::repository_init(port).await.map_err(Into::into),
+            RepositoryAction::Branch { name } => cli::repository_branch(port, name).await.map_err(Into::into),
+            RepositoryAction::Checkout { branch } => cli::repository_checkout(port, branch).await.map_err(Into::into),
+            RepositoryAction::Commit { message } => cli::repository_commit(port, message).await.map_err(Into::into),
+            RepositoryAction::Status => cli::repository_status(port).await.map_err(Into::into),
+            RepositoryAction::Diff => cli::repository_diff(port).await.map_err(Into::into),
+            RepositoryAction::Log => cli::repository_log(port).await.map_err(Into::into),
         },
     };
-
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -160,7 +177,6 @@ fn entry_type_parser() -> impl TypedValueParser<Value = EntryType> {
 /// Prints an error with everything that caused it, innermost last.
 fn report(error: &dyn std::error::Error) {
     eprintln!("error: {error}");
-
     let mut source = error.source();
     while let Some(cause) = source {
         eprintln!("  caused by: {cause}");
@@ -171,7 +187,6 @@ fn report(error: &dyn std::error::Error) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use clap::CommandFactory;
 
     #[test]
@@ -311,5 +326,19 @@ mod tests {
                 action: JobDescriptionAction::Delete { id: 17 }
             }
         ));
+
+    #[test]
+    fn repository_commands_accept_the_documented_forms() {
+        for arguments in [
+            ["hoskinator", "repository", "init"].as_slice(),
+            ["hoskinator", "repository", "branch", "revision"].as_slice(),
+            ["hoskinator", "repository", "checkout", "revision"].as_slice(),
+            ["hoskinator", "repository", "commit", "message"].as_slice(),
+            ["hoskinator", "repository", "status"].as_slice(),
+            ["hoskinator", "repository", "diff"].as_slice(),
+            ["hoskinator", "repository", "log"].as_slice(),
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_ok());
+        }
     }
 }

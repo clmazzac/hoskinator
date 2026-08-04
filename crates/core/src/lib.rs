@@ -11,4 +11,5 @@ pub mod home;
 pub mod job_description;
 pub mod profile;
 pub mod section;
+pub mod repository;
 pub mod store;

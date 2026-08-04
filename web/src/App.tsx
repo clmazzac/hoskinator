@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import {
   ENTRY_TYPES,
+  callRepository,
   createJobDescription,
   createSection,
   deleteJobDescription,
@@ -12,16 +13,13 @@ import {
   listSections,
   renameSection,
   retypeSection,
+  RpcFailure,
   setProfile,
   type JobDescription,
   type Section,
 } from "./rpc";
 
-/**
- * A harness for exercising the JSON-RPC contract from a browser, not the product UI.
- *
- * Edits the Profile as raw JSON and Job Descriptions as pasted posting text.
- */
+/** A harness for exercising the JSON-RPC contract from a browser, not the product UI. */
 export default function App() {
   const [text, setText] = useState("");
   const [status, setStatus] = useState("Loading…");
@@ -31,10 +29,15 @@ export default function App() {
   const [jobDescriptions, setJobDescriptions] = useState<JobDescription[]>([]);
   const [selected, setSelected] = useState<JobDescription | null>(null);
   const [jobDescriptionStatus, setJobDescriptionStatus] = useState("Loading…");
+  const [repositoryRequest, setRepositoryRequest] = useState(
+    '{\n  "method": "repository.status",\n  "params": []\n}',
+  );
+  const [repositoryResult, setRepositoryResult] = useState("");
+  const [repositoryStatus, setRepositoryStatus] = useState("");
 
   useEffect(() => {
-    load();
-    loadJobDescriptions();
+    void load();
+    void loadJobDescriptions();
   }, []);
 
   async function load() {
@@ -103,6 +106,17 @@ export default function App() {
       setJobDescriptionStatus(deleted ? "Deleted." : "Job Description no longer exists.");
     } catch (error) {
       setJobDescriptionStatus(`Failed: ${(error as Error).message}`);
+  async function callRepositoryRequest() {
+    try {
+      const request = JSON.parse(repositoryRequest);
+      const result = await callRepository(request);
+      setRepositoryResult(JSON.stringify(result, null, 2));
+      setRepositoryStatus("Succeeded.");
+    } catch (error) {
+      const detail = error instanceof RpcFailure
+        ? `Failed (${error.code}): ${error.message}`
+        : `Failed: ${(error as Error).message}`;
+      setRepositoryStatus(detail);
     }
   }
 
@@ -181,6 +195,28 @@ export default function App() {
           {selected ? JSON.stringify(selected, null, 2) : "Select a Job Description."}
         </pre>
       </section>
+      <hr />
+      <h2>Repository JSON-RPC</h2>
+      <textarea
+        rows={12}
+        cols={72}
+        value={repositoryRequest}
+        spellCheck={false}
+        aria-label="Repository JSON-RPC request"
+        onChange={(event) => setRepositoryRequest(event.target.value)}
+      />
+      <p>
+        <button onClick={callRepositoryRequest}>Call</button>{" "}
+        <span>{repositoryStatus}</span>
+      </p>
+      <textarea
+        rows={24}
+        cols={72}
+        value={repositoryResult}
+        readOnly
+        spellCheck={false}
+        aria-label="Repository JSON-RPC response"
+      />
     </main>
   );
 }
