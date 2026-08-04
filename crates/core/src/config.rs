@@ -13,8 +13,10 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Where Hoskinator keeps its data. Overridden by `HOSKINATOR_HOME` env var
+    /// Where Hoskinator keeps its data. Overridden by `HOSKINATOR_HOME` env var.
     pub home: Option<PathBuf>,
+    /// The configured standard Git worktree for the user's resume.
+    pub resume_repo: Option<PathBuf>,
 }
 
 /// A configuration file exists but could not be used.
@@ -52,7 +54,6 @@ impl Config {
                 });
             }
         };
-
         toml::from_str(&text).map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
             source,
@@ -63,7 +64,6 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use tempfile::TempDir;
 
     fn write_config(dir: &TempDir, contents: &str) -> PathBuf {
@@ -75,48 +75,47 @@ mod tests {
     #[test]
     fn a_missing_file_yields_the_default() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("does-not-exist.toml");
-
-        assert_eq!(Config::load(&path).unwrap(), Config::default());
+        assert_eq!(
+            Config::load(&dir.path().join("does-not-exist.toml")).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]
     fn an_empty_file_yields_the_default() {
         let dir = TempDir::new().unwrap();
-        let path = write_config(&dir, "");
-
-        assert_eq!(Config::load(&path).unwrap(), Config::default());
+        assert_eq!(
+            Config::load(&write_config(&dir, "")).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]
-    fn reads_the_home_key() {
+    fn reads_configured_paths() {
         let dir = TempDir::new().unwrap();
-        let path = write_config(&dir, "home = \"/srv/hoskinator\"\n");
-
-        let config = Config::load(&path).unwrap();
-
+        let config = Config::load(&write_config(
+            &dir,
+            "home = \"/srv/hoskinator\"\nresume_repo = \"/srv/resume\"\n",
+        ))
+        .unwrap();
         assert_eq!(config.home, Some(PathBuf::from("/srv/hoskinator")));
+        assert_eq!(config.resume_repo, Some(PathBuf::from("/srv/resume")));
     }
 
     #[test]
     fn an_unknown_key_is_rejected() {
         let dir = TempDir::new().unwrap();
-        // `hom` rather than `home`: the typo must not be silently ignored.
-        let path = write_config(&dir, "hom = \"/srv/hoskinator\"\n");
-
-        let error = Config::load(&path).unwrap_err();
-
-        assert!(matches!(error, ConfigError::Parse { .. }), "got {error:?}");
+        assert!(matches!(
+            Config::load(&write_config(&dir, "hom = \"/srv/hoskinator\"\n")).unwrap_err(),
+            ConfigError::Parse { .. }
+        ));
     }
 
     #[test]
     fn invalid_toml_is_reported_with_its_path() {
         let dir = TempDir::new().unwrap();
         let path = write_config(&dir, "home = \n");
-
-        let error = Config::load(&path).unwrap_err();
-
-        match error {
+        match Config::load(&path).unwrap_err() {
             ConfigError::Parse { path: reported, .. } => assert_eq!(reported, path),
             other => panic!("expected a parse error, got {other:?}"),
         }

@@ -29,15 +29,9 @@ async function call<T>(method: string, params: unknown[]): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
   });
-
-  if (!response.ok) {
-    throw new Error(`the daemon answered ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`the daemon answered ${response.status}`);
   const answer = await response.json();
-  if (answer.error) {
-    throw new RpcFailure(answer.error.code, answer.error.message);
-  }
+  if (answer.error) throw new RpcFailure(answer.error.code, answer.error.message);
   return answer.result as T;
 }
 
@@ -106,4 +100,38 @@ export function listJobDescriptions(
 
 export function deleteJobDescription(id: number): Promise<boolean> {
   return call("jd.delete", [id]);
+}
+
+export interface Head { branch: string | null; commit_id: string | null }
+export interface Branch { name: string; commit_id: string | null; is_head: boolean }
+export interface RepositoryState { head: Head | null; branches: Branch[] }
+export interface CreateBranchRequest { name: string }
+export interface CheckoutRequest { branch: string }
+export interface CommitRequest { message: string }
+export interface CommitAuthor { name: string; email: string }
+export interface GitTime { seconds_since_epoch: number; offset_minutes: number }
+export interface CommitRecord { id: string; message: string; author: CommitAuthor; committed_at: GitTime; parents: string[] }
+export type FileChange = "added" | "modified" | "deleted" | "renamed" | "typechange" | "conflicted" | "untracked";
+export interface StatusEntry { path: string; old_path: string | null; index: FileChange | null; worktree: FileChange | null }
+export interface RepositoryStatus { head: Head | null; entries: StatusEntry[] }
+export type DiffLineKind = "context" | "addition" | "deletion";
+export interface DiffLine { kind: DiffLineKind; old_line: number | null; new_line: number | null; content: string }
+export interface DiffHunk { old_start: number; old_lines: number; new_start: number; new_lines: number; lines: DiffLine[] }
+export interface FileDiff { old_path: string | null; new_path: string | null; status: FileChange; hunks: DiffHunk[] }
+export interface RepositoryDiff { files: FileDiff[] }
+export interface RepositoryLog { commits: CommitRecord[] }
+
+export type RepositoryRequest =
+  | { method: "repository.init"; params: [] }
+  | { method: "repository.branch.create"; params: [CreateBranchRequest] }
+  | { method: "repository.checkout"; params: [CheckoutRequest] }
+  | { method: "repository.commit"; params: [CommitRequest] }
+  | { method: "repository.status"; params: [] }
+  | { method: "repository.diff"; params: [] }
+  | { method: "repository.log"; params: [] };
+
+export type RepositoryResult = RepositoryState | Branch | CommitRecord | RepositoryStatus | RepositoryDiff | RepositoryLog;
+
+export function callRepository(request: RepositoryRequest): Promise<RepositoryResult> {
+  return call<RepositoryResult>(request.method, request.params);
 }

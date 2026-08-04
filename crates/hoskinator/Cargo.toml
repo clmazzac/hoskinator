@@ -12,11 +12,12 @@ hoskinator-core = { workspace = true }
 jsonrpsee = { version = "0.26", features = ["http-client", "macros", "server"] }
 mime_guess = "2"
 rust-embed = { version = "8", features = ["debug-embed"] }
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 
 [dev-dependencies]
+git2 = { version = "0.20", features = ["vendored-libgit2"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

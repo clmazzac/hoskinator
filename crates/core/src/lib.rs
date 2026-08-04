@@ -10,5 +10,6 @@ pub mod config;
 pub mod home;
 pub mod job_description;
 pub mod profile;
+pub mod repository;
 pub mod section;
 pub mod store;

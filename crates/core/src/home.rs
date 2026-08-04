@@ -51,14 +51,23 @@ pub struct Home {
 }
 
 impl Home {
+    /// Reads configuration from its platform-defined location.
+    pub fn config() -> Result<Config, ConfigError> {
+        match config_file_path() {
+            Some(path) => Config::load(&path),
+            None => Ok(Config::default()),
+        }
+    }
+
+    /// Resolves the home directory from the environment and supplied configuration.
+    pub fn resolve_with_config(config: &Config) -> Result<Self, HomeError> {
+        Self::resolve_from(std::env::var_os(HOME_ENV), config, platform_data_dir())
+    }
+
     /// Resolves the home directory from the environment and the configuration file.
     pub fn resolve() -> Result<Self, HomeError> {
-        let config = match config_file_path() {
-            Some(path) => Config::load(&path)?,
-            None => Config::default(),
-        };
-
-        Self::resolve_from(std::env::var_os(HOME_ENV), &config, platform_data_dir())
+        let config = Self::config()?;
+        Self::resolve_with_config(&config)
     }
 
     /// The resolution rule itself, with every input supplied by the caller.
@@ -132,6 +141,7 @@ mod tests {
     fn config_naming(path: &str) -> Config {
         Config {
             home: Some(PathBuf::from(path)),
+            resume_repo: None,
         }
     }
 
