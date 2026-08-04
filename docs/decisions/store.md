@@ -80,3 +80,59 @@ free.
 **Accepted cost:** the drift ADR-0003 warns about — when rendercv adds a network, Hoskinator rejects
 YAML that is actually valid until the enum is bumped. A test pins all seventeen wire strings, and
 `Google Scholar`, `IMDB`, and `ORCID` need `serde(rename)` to match.
+
+## The Master Store holds decomposed records, not YAML blobs (Slice 2, #3)
+
+A Section is a managed `{ name, entry_type }` record, and Entries and Bullets are rows. The
+alternative considered was storing each section as a free-text field holding raw rendercv YAML.
+
+**Why not blobs:** a blob has no addressable units, and four slices need them — FTS5 search (#6)
+matching a bullet rather than a section, the assembly loop (#10) picking units into a resume, and
+the AI slices (#12–#14) scoring and drafting per bullet. Bullet/Variant is the product: an
+accomplishment identity owning several wordings. That requires the accomplishment to be a record.
+
+Resumes are already text on git branches. A store of text blobs is another resume, which makes the
+tool a file copier; the store earns its existence by decomposing.
+
+**What blobs are genuinely better at:** first-time entry. That is recovered by making raw YAML an
+*input path* — paste a section, parse it into Entries and Bullets — rather than the storage format.
+
+## `entry_type` is a Rust enum of the nine rendercv arms (Slice 2, #3)
+
+`EntryType`, stored as plain `TEXT`. rendercv 2.8's `ListOfEntries` has nine arms: text (a bare
+string), one-line, normal, experience, education, publication, bullet, numbered, and
+reversed-numbered.
+
+**Why an enum rather than a validated string:** the arms are *homogeneous* arrays, so a section
+mixing entry shapes is rejected outright — checked against the vendored schema, `[experience,
+publication]` and `[experience, "text"]` both fail. `entry_type` is the invariant that keeps every
+emitted section homogeneous. A permissive string would also buy no forward compatibility: each type
+is a different field set, so an unknown one has nothing behind it to render.
+
+**The failure mode it prevents:** entry types are detected from fields, not tagged — `entry_type`
+appears nowhere on the wire — and `additionalProperties` is `true`, so an object carrying the
+required fields of two types validates and rendercv picks the renderer by its own arm ordering. That
+is wrong output with no error.
+
+**Accepted cost:** the usual drift — a tenth arm is rejected until the enum is bumped. Cheaper here
+than for `SocialNetworkName`, since a new arm needs its field set modelled regardless.
+
+**No `CHECK` constraint on the column:** it would be a second copy of the variant list, in a file
+that only changes by migration. The enum is the one authority.
+
+## Section ordering is not a Section field (Slice 2, #3)
+
+Order is a property of one rendered resume, not of the store — two resumes built from the same
+store legitimately order their sections differently. It belongs to assembly (#10).
+
+Section identity is likewise unforced: Entries are eligible for sections by `entry_type` match and
+never point at a Section, so a rename orphans nothing.
+
+## Note: verbatim passthrough sections (Slice 2, #3)
+
+Sections that are never tailored and hold no accomplishments — a one-line Skills list, a short
+Summary — gain nothing from Bullet/Variant and are overhead as decomposed records. A section type
+that stores its rendercv fragment verbatim would serve them.
+
+Deliberately not built: nothing needs it before assembly (#10), and it is a user-facing surface, so
+its design is the maintainer's.
