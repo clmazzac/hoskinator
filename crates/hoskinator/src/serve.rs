@@ -15,7 +15,7 @@ use hoskinator_core::home::{Home, HomeError};
 use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
-use crate::rpc::{ProfileApi, ProfileRpcServer};
+use crate::rpc::{ProfileApi, ProfileRpcServer, SectionApi, SectionRpcServer};
 
 /// Port the daemon binds unless told otherwise.
 pub const DEFAULT_PORT: u16 = 8737;
@@ -68,7 +68,8 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
 /// The daemon's routes, with every request passing the authenticator.
 fn router(store: Arc<Store>) -> Result<Router, ServeError> {
     let mut module = RpcModule::new(());
-    module.merge(ProfileApi::new(store).into_rpc())?;
+    module.merge(ProfileApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(SectionApi::new(store).into_rpc())?;
 
     Ok(Router::new()
         .route(RPC_PATH, post(dispatch))
@@ -234,6 +235,117 @@ mod tests {
         .await;
 
         assert_eq!(got["result"], serde_json::to_value(&profile).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_created_section_is_visible_to_section_list() {
+        let (_dir, router) = test_router().await;
+
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Experience","experience"]}"#,
+        )
+        .await;
+        assert!(created.get("error").is_none(), "create failed: {created}");
+
+        let listed = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"section.list","params":[]}"#,
+        )
+        .await;
+
+        assert_eq!(
+            listed["result"],
+            serde_json::json!([{ "name": "Experience", "entry_type": "experience" }])
+        );
+    }
+
+    #[tokio::test]
+    async fn section_update_renames_and_retypes_in_one_call() {
+        let (_dir, router) = test_router().await;
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Writing","normal"]}"#,
+        )
+        .await;
+
+        let updated = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"section.update","params":["Writing","Publications","publication"]}"#,
+        )
+        .await;
+
+        assert_eq!(
+            updated["result"],
+            serde_json::json!({ "name": "Publications", "entry_type": "publication" })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deleted_section_leaves_the_list_empty() {
+        let (_dir, router) = test_router().await;
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Projects","normal"]}"#,
+        )
+        .await;
+
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"section.delete","params":["Projects"]}"#,
+        )
+        .await;
+        let listed = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":3,"method":"section.list","params":[]}"#,
+        )
+        .await;
+
+        assert_eq!(listed["result"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_name_answers_section_invalid() {
+        let (_dir, router) = test_router().await;
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Projects","normal"]}"#,
+        )
+        .await;
+
+        let second = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"section.create","params":["Projects","normal"]}"#,
+        )
+        .await;
+
+        assert_eq!(second["error"]["code"], crate::rpc::SECTION_INVALID);
+    }
+
+    #[tokio::test]
+    async fn deleting_an_absent_section_answers_section_not_found() {
+        let (_dir, router) = test_router().await;
+
+        let answer = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.delete","params":["Nowhere"]}"#,
+        )
+        .await;
+
+        assert_eq!(answer["error"]["code"], crate::rpc::SECTION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn an_entry_type_rendercv_does_not_have_is_rejected() {
+        let (_dir, router) = test_router().await;
+
+        let answer = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Timeline","timeline"]}"#,
+        )
+        .await;
+
+        assert!(answer.get("error").is_some(), "got {answer}");
     }
 
     #[tokio::test]
