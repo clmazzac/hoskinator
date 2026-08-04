@@ -3,12 +3,13 @@
 //! Speaks to the daemon over HTTP like any other frontend. There is no in-process path to the
 //! store (ADR-0003).
 
+use hoskinator_core::job_description::NewJobDescription;
 use hoskinator_core::profile::Profile;
 use hoskinator_core::section::{EntryType, Section};
 use jsonrpsee::core::client::Error as ClientError;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
-use crate::rpc::{ProfileRpcClient, SectionRpcClient};
+use crate::rpc::{JobDescriptionRpcClient, ProfileRpcClient, SectionRpcClient};
 
 /// A command could not be carried out.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +32,15 @@ pub enum CliError {
 
     #[error("could not render the Profile")]
     Render(#[source] serde_json::Error),
+
+    #[error("could not read a Job Description from standard input")]
+    ReadJobDescriptionInput(#[source] std::io::Error),
+
+    #[error("standard input is not a valid Job Description")]
+    ParseJobDescriptionInput(#[source] serde_json::Error),
+
+    #[error("could not render a Job Description")]
+    RenderJobDescription(#[source] serde_json::Error),
 }
 
 /// Prints the stored Profile as JSON.
@@ -136,6 +146,63 @@ fn table(sections: &[Section]) -> String {
 const NAME_HEADING: &str = "NAME";
 const TYPE_HEADING: &str = "ENTRY TYPE";
 
+/// Creates a Job Description from JSON on standard input and prints its record.
+pub async fn jd_create(port: u16) -> Result<(), CliError> {
+    let job_description = read_job_description(std::io::stdin().lock())?;
+    let created = client(port)?
+        .jd_create(job_description)
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print_job_description(&created)
+}
+
+/// Prints the Job Description with `id`, or `null` when it is absent.
+pub async fn jd_get(port: u16, id: i64) -> Result<(), CliError> {
+    let job_description = client(port)?
+        .jd_get(id)
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print_job_description(&job_description)
+}
+
+/// Prints every Job Description matching an optional full-text query.
+pub async fn jd_list(port: u16, query: Option<String>) -> Result<(), CliError> {
+    let job_descriptions = client(port)?
+        .jd_list(query)
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print_job_description(&job_descriptions)
+}
+
+/// Deletes the Job Description with `id` and prints whether it existed.
+pub async fn jd_delete(port: u16, id: i64) -> Result<(), CliError> {
+    let deleted = client(port)?
+        .jd_delete(id)
+        .await
+        .map_err(|source| classify(source, port))?;
+
+    print_job_description(&deleted)
+}
+
+fn read_job_description(mut input: impl std::io::Read) -> Result<NewJobDescription, CliError> {
+    let mut text = String::new();
+    input
+        .read_to_string(&mut text)
+        .map_err(CliError::ReadJobDescriptionInput)?;
+
+    serde_json::from_str(&text).map_err(CliError::ParseJobDescriptionInput)
+}
+
+fn print_job_description(value: &impl serde::Serialize) -> Result<(), CliError> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).map_err(CliError::RenderJobDescription)?
+    );
+    Ok(())
+}
 fn read_profile(mut input: impl std::io::Read) -> Result<Profile, CliError> {
     let mut text = String::new();
     input
@@ -255,5 +322,29 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("8737"), "got {rendered}");
         assert!(rendered.contains("hoskinator serve"), "got {rendered}");
+    }
+    #[test]
+    fn a_job_description_is_read_from_json_on_standard_input() {
+        let input = r#"{"title":"Systems engineer","text":"Build Rust services."}"#;
+
+        let job_description = read_job_description(input.as_bytes()).unwrap();
+
+        assert_eq!(
+            job_description,
+            NewJobDescription {
+                title: Some("Systems engineer".into()),
+                text: "Build Rust services.".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn input_that_is_not_a_job_description_is_rejected() {
+        let error = read_job_description("not json".as_bytes()).unwrap_err();
+
+        assert!(
+            matches!(error, CliError::ParseJobDescriptionInput(_)),
+            "got {error:?}"
+        );
     }
 }

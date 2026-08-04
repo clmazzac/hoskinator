@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::profile::Profile;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
@@ -55,6 +56,21 @@ pub trait SectionRpc {
     async fn section_delete(&self, name: String) -> RpcResult<()>;
 }
 
+#[rpc(server, client)]
+pub trait JobDescriptionRpc {
+    #[method(name = "jd.create")]
+    async fn jd_create(&self, job_description: NewJobDescription) -> RpcResult<JobDescription>;
+
+    #[method(name = "jd.get")]
+    async fn jd_get(&self, id: i64) -> RpcResult<Option<JobDescription>>;
+
+    #[method(name = "jd.list")]
+    async fn jd_list(&self, query: Option<String>) -> RpcResult<Vec<JobDescription>>;
+
+    #[method(name = "jd.delete")]
+    async fn jd_delete(&self, id: i64) -> RpcResult<bool>;
+}
+
 /// Serves the Profile methods from one store.
 pub struct ProfileApi {
     store: Arc<Store>,
@@ -72,6 +88,17 @@ pub struct SectionApi {
 }
 
 impl SectionApi {
+    pub fn new(store: Arc<Store>) -> Self {
+        Self { store }
+    }
+}
+
+/// Serves the Job Description methods from one store.
+pub struct JobDescriptionApi {
+    store: Arc<Store>,
+}
+
+impl JobDescriptionApi {
     pub fn new(store: Arc<Store>) -> Self {
         Self { store }
     }
@@ -106,7 +133,6 @@ impl SectionRpcServer for SectionApi {
         self.store.delete_section(&name).await.map_err(rpc_error)
     }
 }
-
 #[async_trait]
 impl ProfileRpcServer for ProfileApi {
     async fn profile_get(&self) -> RpcResult<Profile> {
@@ -115,6 +141,34 @@ impl ProfileRpcServer for ProfileApi {
 
     async fn profile_set(&self, profile: Profile) -> RpcResult<()> {
         self.store.set_profile(&profile).await.map_err(rpc_error)
+    }
+}
+
+#[async_trait]
+impl JobDescriptionRpcServer for JobDescriptionApi {
+    async fn jd_create(&self, job_description: NewJobDescription) -> RpcResult<JobDescription> {
+        self.store
+            .create_job_description(&job_description)
+            .await
+            .map_err(rpc_error)
+    }
+
+    async fn jd_get(&self, id: i64) -> RpcResult<Option<JobDescription>> {
+        self.store.job_description(id).await.map_err(rpc_error)
+    }
+
+    async fn jd_list(&self, query: Option<String>) -> RpcResult<Vec<JobDescription>> {
+        self.store
+            .job_descriptions(query.as_deref())
+            .await
+            .map_err(rpc_error)
+    }
+
+    async fn jd_delete(&self, id: i64) -> RpcResult<bool> {
+        self.store
+            .delete_job_description(id)
+            .await
+            .map_err(rpc_error)
     }
 }
 
@@ -127,7 +181,10 @@ fn code_for(error: &StoreError) -> i32 {
         | StoreError::Migrate { .. }
         | StoreError::SchemaVersion(_) => STORE_UNAVAILABLE,
         StoreError::DecodeProfile { .. } => STORE_CORRUPT,
-        StoreError::ReadProfile(_)
+        StoreError::CreateJobDescription(_)
+        | StoreError::ReadJobDescriptions(_)
+        | StoreError::DeleteJobDescription(_)
+        | StoreError::ReadProfile(_)
         | StoreError::WriteProfile(_)
         | StoreError::EncodeProfile { .. }
         | StoreError::ReadSection(_)
