@@ -36,3 +36,42 @@ export function getProfile(): Promise<unknown> {
 export function setProfile(profile: unknown): Promise<null> {
   return call<null>("profile.set", [profile]);
 }
+
+/** A section as the store holds it. */
+export interface Section {
+  name: string;
+  entry_type: string;
+}
+
+/** The nine entry types, in the order rendercv lists its arms. */
+export const ENTRY_TYPES = [
+  "text",
+  "one-line",
+  "normal",
+  "experience",
+  "education",
+  "publication",
+  "bullet",
+  "numbered",
+  "reversed-numbered",
+] as const;
+
+export function listSections(): Promise<Section[]> {
+  return call<Section[]>("section.list", []);
+}
+
+export function createSection(name: string, entryType: string): Promise<Section> {
+  return call<Section>("section.create", [name, entryType]);
+}
+
+export function renameSection(name: string, newName: string): Promise<Section> {
+  return call<Section>("section.update", [name, newName, null]);
+}
+
+export function retypeSection(name: string, entryType: string): Promise<Section> {
+  return call<Section>("section.update", [name, null, entryType]);
+}
+
+export function deleteSection(name: string): Promise<null> {
+  return call<null>("section.delete", [name]);
+}
