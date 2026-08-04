@@ -43,3 +43,18 @@ invents nothing.
 
 **The real UI is Slice 9 (#10)**, where the two-panel assembly screen gets a design conversation of
 its own. React was chosen for that screen, not for this form.
+
+## The section harness is one control per method (Slice 2, #3)
+
+Sections as raw JSON, then unstyled Create, Rename, Retype, and Delete controls. Each button issues
+exactly one JSON-RPC call and reloads the list.
+
+**Why not an editable array with one Save**, which would match the Profile textarea above it: there
+is no bulk-replace method, so Save would have to diff the array into calls, and a row whose name
+changed is ambiguous between a rename and a delete plus a create. Those come apart once Entries
+exist. That is the failure this file already records for the `OneOrMany` collapse — a data decision
+hidden in a form control.
+
+**Still a harness, not the product UI.** No styling and no selectable rows; the name is retyped into
+each control, because turning the list into something you click would be interaction design. Slice 9
+(#10) owns the real interface.

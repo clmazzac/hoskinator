@@ -42,3 +42,31 @@ tree on every PR.
 
 **Accepted cost:** the fixture goes stale silently. Nothing in CI notices a new rendercv; refreshing
 it is a manual step, and the ignored test only helps someone who runs it.
+
+## Section methods: four, with a patch-shaped update (Slice 2, #3)
+
+`section.create`, `section.list`, `section.update`, `section.delete`. `update` takes an optional
+`new_name` and `entry_type`.
+
+**Why no `section.get`:** `list` already returns whole records, and a store holding a handful of
+sections has nothing to page. Adding one later is additive.
+
+**Why patch rather than replace:** a replace-shaped update would make a retype resend the name —
+the field most likely to be stale in a concurrent edit.
+
+**An unknown entry type never reaches a handler.** It fails deserialisation, so jsonrpsee answers
+`-32602` rather than `SECTION_INVALID`. Frontends that validate before sending see their own error
+first; the code is not one to match on for that case.
+
+## The CLI splits update into `rename` and `retype` (Slice 2, #3)
+
+`hoskinator section create / list / rename / retype / delete`, with `create` taking `--type`.
+
+**Why the split:** `section.update` takes optional fields, but a flag that may be omitted reads
+worse at a terminal than a verb that says what it does. `create` and `delete` keep the RPC's names.
+
+**Reads print a table, not JSON.** A `--json` flag is additive and can be added when something needs
+to pipe the output; nothing does yet.
+
+**Accepted cost:** CLI and JSON-RPC no longer use one vocabulary for one operation — `rename` and
+`retype` both reach `section.update`.
