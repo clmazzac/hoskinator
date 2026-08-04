@@ -151,9 +151,15 @@ async fn main() -> ExitCode {
             }
         Command::Repository { action } => match action {
             RepositoryAction::Init => cli::repository_init(port).await.map_err(Into::into),
-            RepositoryAction::Branch { name } => cli::repository_branch(port, name).await.map_err(Into::into),
-            RepositoryAction::Checkout { branch } => cli::repository_checkout(port, branch).await.map_err(Into::into),
-            RepositoryAction::Commit { message } => cli::repository_commit(port, message).await.map_err(Into::into),
+            RepositoryAction::Branch { name } => {
+                cli::repository_branch(port, name).await.map_err(Into::into)
+            }
+            RepositoryAction::Checkout { branch } => cli::repository_checkout(port, branch)
+                .await
+                .map_err(Into::into),
+            RepositoryAction::Commit { message } => cli::repository_commit(port, message)
+                .await
+                .map_err(Into::into),
             RepositoryAction::Status => cli::repository_status(port).await.map_err(Into::into),
             RepositoryAction::Diff => cli::repository_diff(port).await.map_err(Into::into),
             RepositoryAction::Log => cli::repository_log(port).await.map_err(Into::into),

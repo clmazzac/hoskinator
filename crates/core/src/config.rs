@@ -44,10 +44,20 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(source) => return Err(ConfigError::Read { path: path.to_path_buf(), source }),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(source) => {
+                return Err(ConfigError::Read {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
         };
-        toml::from_str(&text).map_err(|source| ConfigError::Parse { path: path.to_path_buf(), source })
+        toml::from_str(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })
     }
 }
 
@@ -65,19 +75,29 @@ mod tests {
     #[test]
     fn a_missing_file_yields_the_default() {
         let dir = TempDir::new().unwrap();
-        assert_eq!(Config::load(&dir.path().join("does-not-exist.toml")).unwrap(), Config::default());
+        assert_eq!(
+            Config::load(&dir.path().join("does-not-exist.toml")).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]
     fn an_empty_file_yields_the_default() {
         let dir = TempDir::new().unwrap();
-        assert_eq!(Config::load(&write_config(&dir, "")).unwrap(), Config::default());
+        assert_eq!(
+            Config::load(&write_config(&dir, "")).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]
     fn reads_configured_paths() {
         let dir = TempDir::new().unwrap();
-        let config = Config::load(&write_config(&dir, "home = \"/srv/hoskinator\"\nresume_repo = \"/srv/resume\"\n")).unwrap();
+        let config = Config::load(&write_config(
+            &dir,
+            "home = \"/srv/hoskinator\"\nresume_repo = \"/srv/resume\"\n",
+        ))
+        .unwrap();
         assert_eq!(config.home, Some(PathBuf::from("/srv/hoskinator")));
         assert_eq!(config.resume_repo, Some(PathBuf::from("/srv/resume")));
     }
@@ -85,13 +105,19 @@ mod tests {
     #[test]
     fn an_unknown_key_is_rejected() {
         let dir = TempDir::new().unwrap();
-        assert!(matches!(Config::load(&write_config(&dir, "hom = \"/srv/hoskinator\"\n")).unwrap_err(), ConfigError::Parse { .. }));
+        assert!(matches!(
+            Config::load(&write_config(&dir, "hom = \"/srv/hoskinator\"\n")).unwrap_err(),
+            ConfigError::Parse { .. }
+        ));
     }
 
     #[test]
     fn invalid_toml_is_reported_with_its_path() {
         let dir = TempDir::new().unwrap();
         let path = write_config(&dir, "home = \n");
-        match Config::load(&path).unwrap_err() { ConfigError::Parse { path: reported, .. } => assert_eq!(reported, path), other => panic!("expected a parse error, got {other:?}") }
+        match Config::load(&path).unwrap_err() {
+            ConfigError::Parse { path: reported, .. } => assert_eq!(reported, path),
+            other => panic!("expected a parse error, got {other:?}"),
+        }
     }
 }

@@ -5,8 +5,8 @@
 
 use hoskinator_core::job_description::NewJobDescription;
 use hoskinator_core::profile::Profile;
-use hoskinator_core::section::{EntryType, Section};
 use hoskinator_core::repository::{CheckoutRequest, CommitRequest, CreateBranchRequest};
+use hoskinator_core::section::{EntryType, Section};
 use jsonrpsee::core::client::Error as ClientError;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
@@ -17,7 +17,11 @@ use crate::rpc::{
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error("no Hoskinator daemon answered on port {port}; start one with `hoskinator serve`")]
-    NoDaemon { port: u16, #[source] source: ClientError },
+    NoDaemon {
+        port: u16,
+        #[source]
+        source: ClientError,
+    },
     #[error("the daemon rejected the request")]
     Request(#[source] ClientError),
     #[error("could not read a Profile from standard input")]
@@ -38,44 +42,90 @@ pub enum CliError {
 }
 
 pub async fn profile_get(port: u16) -> Result<(), CliError> {
-    render(client(port)?.profile_get().await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .profile_get()
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 pub async fn profile_set(port: u16) -> Result<(), CliError> {
     let profile = read_profile(std::io::stdin().lock())?;
-    client(port)?.profile_set(profile).await.map_err(|source| classify(source, port))
+    client(port)?
+        .profile_set(profile)
+        .await
+        .map_err(|source| classify(source, port))
 }
 
 pub async fn repository_init(port: u16) -> Result<(), CliError> {
-    render(client(port)?.repository_init().await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .repository_init()
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 pub async fn repository_branch(port: u16, name: String) -> Result<(), CliError> {
-    render(client(port)?.repository_branch_create(CreateBranchRequest { name }).await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .repository_branch_create(CreateBranchRequest { name })
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 pub async fn repository_checkout(port: u16, branch: String) -> Result<(), CliError> {
-    render(client(port)?.repository_checkout(CheckoutRequest { branch }).await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .repository_checkout(CheckoutRequest { branch })
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 pub async fn repository_commit(port: u16, message: String) -> Result<(), CliError> {
-    render(client(port)?.repository_commit(CommitRequest { message }).await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .repository_commit(CommitRequest { message })
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 pub async fn repository_status(port: u16) -> Result<(), CliError> {
-    render(client(port)?.repository_status().await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .repository_status()
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 pub async fn repository_diff(port: u16) -> Result<(), CliError> {
-    render(client(port)?.repository_diff().await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .repository_diff()
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 pub async fn repository_log(port: u16) -> Result<(), CliError> {
-    render(client(port)?.repository_log().await.map_err(|source| classify(source, port))?)
+    render(
+        client(port)?
+            .repository_log()
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 fn render(value: impl serde::Serialize) -> Result<(), CliError> {
-    println!("{}", serde_json::to_string_pretty(&value).map_err(CliError::Render)?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).map_err(CliError::Render)?
+    );
     Ok(())
 }
 
@@ -217,7 +267,9 @@ fn print_job_description(value: &impl serde::Serialize) -> Result<(), CliError> 
 }
 fn read_profile(mut input: impl std::io::Read) -> Result<Profile, CliError> {
     let mut text = String::new();
-    input.read_to_string(&mut text).map_err(CliError::ReadInput)?;
+    input
+        .read_to_string(&mut text)
+        .map_err(CliError::ReadInput)?;
     serde_json::from_str(&text).map_err(CliError::ParseInput)
 }
 
@@ -229,7 +281,10 @@ fn client(port: u16) -> Result<HttpClient, CliError> {
 
 fn classify(error: ClientError, port: u16) -> CliError {
     if matches!(error, ClientError::Transport(_)) {
-        CliError::NoDaemon { port, source: error }
+        CliError::NoDaemon {
+            port,
+            source: error,
+        }
     } else {
         CliError::Request(error)
     }

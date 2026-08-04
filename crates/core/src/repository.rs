@@ -235,11 +235,7 @@ impl ResumeRepository {
                     RepositoryError::Operation(error)
                 }
             })?;
-        let name = branch
-            .get()
-            .name()
-            .ok_or_else(non_utf8_error)?
-            .to_owned();
+        let name = branch.get().name().ok_or_else(non_utf8_error)?.to_owned();
         let target = branch
             .get()
             .peel(git2::ObjectType::Tree)
@@ -252,7 +248,9 @@ impl ResumeRepository {
                 },
                 _ => RepositoryError::Operation(error),
             })?;
-        self.repository.set_head(&name).map_err(RepositoryError::Operation)?;
+        self.repository
+            .set_head(&name)
+            .map_err(RepositoryError::Operation)?;
         self.state()
     }
 
@@ -262,9 +260,18 @@ impl ResumeRepository {
                 message: "commit message must not be empty".into(),
             });
         }
-        let parent = self.local_head()?.peel_to_commit().map_err(|_| precondition_error())?;
-        let statuses = self.repository.statuses(None).map_err(RepositoryError::Operation)?;
-        let mut index = self.repository.index().map_err(RepositoryError::Operation)?;
+        let parent = self
+            .local_head()?
+            .peel_to_commit()
+            .map_err(|_| precondition_error())?;
+        let statuses = self
+            .repository
+            .statuses(None)
+            .map_err(RepositoryError::Operation)?;
+        let mut index = self
+            .repository
+            .index()
+            .map_err(RepositoryError::Operation)?;
         for entry in statuses.iter() {
             let status = entry.status();
             if status.contains(Status::WT_NEW) {
@@ -383,7 +390,8 @@ impl ResumeRepository {
             .repository
             .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut options))
             .map_err(RepositoryError::Operation)?;
-        diff.find_similar(None).map_err(RepositoryError::Operation)?;
+        diff.find_similar(None)
+            .map_err(RepositoryError::Operation)?;
         let mut files = Vec::new();
         for index in 0..diff.deltas().len() {
             let delta = diff.get_delta(index).ok_or_else(|| {
@@ -397,46 +405,44 @@ impl ResumeRepository {
                 status: delta_change(delta.status()),
                 hunks: Vec::new(),
             };
-            if !delta.flags().contains(git2::DiffFlags::BINARY) {
-                if let Some(patch) =
+            if !delta.flags().contains(git2::DiffFlags::BINARY)
+                && let Some(patch) =
                     git2::Patch::from_diff(&diff, index).map_err(RepositoryError::Operation)?
-                {
-                    for hunk_index in 0..patch.num_hunks() {
-                        let (hunk, lines) = patch
-                            .hunk(hunk_index)
+            {
+                for hunk_index in 0..patch.num_hunks() {
+                    let (hunk, lines) =
+                        patch.hunk(hunk_index).map_err(RepositoryError::Operation)?;
+                    let mut output = DiffHunk {
+                        old_start: hunk.old_start(),
+                        old_lines: hunk.old_lines(),
+                        new_start: hunk.new_start(),
+                        new_lines: hunk.new_lines(),
+                        lines: Vec::new(),
+                    };
+                    for line_index in 0..lines {
+                        let line = patch
+                            .line_in_hunk(hunk_index, line_index)
                             .map_err(RepositoryError::Operation)?;
-                        let mut output = DiffHunk {
-                            old_start: hunk.old_start(),
-                            old_lines: hunk.old_lines(),
-                            new_start: hunk.new_start(),
-                            new_lines: hunk.new_lines(),
-                            lines: Vec::new(),
+                        let kind = match line.origin() {
+                            ' ' => DiffLineKind::Context,
+                            '+' => DiffLineKind::Addition,
+                            '-' => DiffLineKind::Deletion,
+                            _ => continue,
                         };
-                        for line_index in 0..lines {
-                            let line = patch
-                                .line_in_hunk(hunk_index, line_index)
-                                .map_err(RepositoryError::Operation)?;
-                            let kind = match line.origin() {
-                                ' ' => DiffLineKind::Context,
-                                '+' => DiffLineKind::Addition,
-                                '-' => DiffLineKind::Deletion,
-                                _ => continue,
-                            };
-                            output.lines.push(DiffLine {
-                                kind,
-                                old_line: line.old_lineno(),
-                                new_line: line.new_lineno(),
-                                content: std::str::from_utf8(line.content())
-                                    .map_err(|_| {
-                                        RepositoryError::Operation(git2::Error::from_str(
-                                            "diff content is not UTF-8",
-                                        ))
-                                    })?
-                                    .to_owned(),
-                            });
-                        }
-                        file.hunks.push(output);
+                        output.lines.push(DiffLine {
+                            kind,
+                            old_line: line.old_lineno(),
+                            new_line: line.new_lineno(),
+                            content: std::str::from_utf8(line.content())
+                                .map_err(|_| {
+                                    RepositoryError::Operation(git2::Error::from_str(
+                                        "diff content is not UTF-8",
+                                    ))
+                                })?
+                                .to_owned(),
+                        });
                     }
+                    file.hunks.push(output);
                 }
             }
             files.push(file);
@@ -445,7 +451,10 @@ impl ResumeRepository {
     }
 
     pub fn log(&self) -> Result<RepositoryLog, RepositoryError> {
-        let mut walk = self.repository.revwalk().map_err(RepositoryError::Operation)?;
+        let mut walk = self
+            .repository
+            .revwalk()
+            .map_err(RepositoryError::Operation)?;
         if self.repository.head().is_ok() {
             walk.push_head().map_err(RepositoryError::Operation)?;
         }
@@ -454,7 +463,10 @@ impl ResumeRepository {
         Ok(RepositoryLog {
             commits: walk
                 .take(LOG_LIMIT)
-                .map(|id| id.map_err(RepositoryError::Operation).and_then(|id| self.record(id)))
+                .map(|id| {
+                    id.map_err(RepositoryError::Operation)
+                        .and_then(|id| self.record(id))
+                })
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -619,11 +631,15 @@ mod tests {
         assert_eq!(repository.state().unwrap().head.unwrap().commit_id, None);
         assert!(reopened.log().unwrap().commits.is_empty());
         assert!(matches!(
-            reopened.create_branch(CreateBranchRequest { name: "next".into() }),
+            reopened.create_branch(CreateBranchRequest {
+                name: "next".into()
+            }),
             Err(RepositoryError::Conflict { .. })
         ));
         assert!(matches!(
-            reopened.commit(CommitRequest { message: "x".into() }),
+            reopened.commit(CommitRequest {
+                message: "x".into()
+            }),
             Err(RepositoryError::Conflict { .. })
         ));
         let files = std::fs::read_dir(dir.path())
@@ -692,11 +708,15 @@ mod tests {
             .unwrap();
         assert_eq!(state.head.unwrap().branch.as_deref(), Some("revision"));
         assert!(matches!(
-            repository.create_branch(CreateBranchRequest { name: "revision".into() }),
+            repository.create_branch(CreateBranchRequest {
+                name: "revision".into()
+            }),
             Err(RepositoryError::Conflict { .. })
         ));
         assert!(matches!(
-            repository.checkout(CheckoutRequest { branch: "missing".into() }),
+            repository.checkout(CheckoutRequest {
+                branch: "missing".into()
+            }),
             Err(RepositoryError::NotFound { .. })
         ));
     }
@@ -768,7 +788,11 @@ mod tests {
     fn returns_structured_diffs_and_limits_log() {
         let (dir, repository) = repo();
         initial_commit(&repository, &dir);
-        std::fs::write(dir.path().join("resume.yaml"), "name: Ada\nsummary: Engineer\n").unwrap();
+        std::fs::write(
+            dir.path().join("resume.yaml"),
+            "name: Ada\nsummary: Engineer\n",
+        )
+        .unwrap();
         std::fs::write(dir.path().join("asset.bin"), [0_u8, 1, 2, 0]).unwrap();
         let mut index = repository.repository.index().unwrap();
         index.add_path(Path::new("asset.bin")).unwrap();
@@ -780,7 +804,11 @@ mod tests {
                     line.kind == DiffLineKind::Addition && line.content == "summary: Engineer\n"
                 })
         }));
-        assert!(diff.files.iter().any(|file| file.new_path.as_deref() == Some("asset.bin") && file.hunks.is_empty()));
+        assert!(
+            diff.files
+                .iter()
+                .any(|file| file.new_path.as_deref() == Some("asset.bin") && file.hunks.is_empty())
+        );
         repository
             .commit(CommitRequest {
                 message: "update resume".into(),
@@ -790,7 +818,9 @@ mod tests {
         assert_eq!(log.commits[0].message, "update resume");
         assert!(log.commits.len() <= LOG_LIMIT);
         assert!(matches!(
-            repository.commit(CommitRequest { message: " ".into() }),
+            repository.commit(CommitRequest {
+                message: " ".into()
+            }),
             Err(RepositoryError::InvalidRequest { .. })
         ));
     }

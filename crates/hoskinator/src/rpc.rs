@@ -13,7 +13,7 @@ use hoskinator_core::repository::{
 };
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
-use jsonrpsee::core::{async_trait, RpcResult};
+use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::ErrorObjectOwned;
 
@@ -164,7 +164,10 @@ impl SectionRpcServer for SectionApi {
     }
 
     async fn section_delete(&self, name: String) -> RpcResult<()> {
-        self.store.delete_section(&name).await.map_err(store_rpc_error)
+        self.store
+            .delete_section(&name)
+            .await
+            .map_err(store_rpc_error)
     }
 }
 #[async_trait]
@@ -174,7 +177,10 @@ impl ProfileRpcServer for ProfileApi {
     }
 
     async fn profile_set(&self, profile: Profile) -> RpcResult<()> {
-        self.store.set_profile(&profile).await.map_err(store_rpc_error)
+        self.store
+            .set_profile(&profile)
+            .await
+            .map_err(store_rpc_error)
     }
 }
 
@@ -377,12 +383,38 @@ mod tests {
 
     #[test]
     fn repository_errors_have_stable_codes() {
-        assert_eq!(repository_code_for(&RepositoryError::MissingConfiguration), REPOSITORY_UNAVAILABLE);
-        assert_eq!(repository_code_for(&RepositoryError::NotFound { name: "main".into() }), REPOSITORY_NOT_FOUND);
-        assert_eq!(repository_code_for(&RepositoryError::Conflict { message: "x".into() }), REPOSITORY_CONFLICT);
-        assert_eq!(repository_code_for(&RepositoryError::InvalidRequest { message: "x".into() }), REPOSITORY_INVALID_REQUEST);
-        assert_eq!(repository_code_for(&RepositoryError::IdentityUnavailable(git2::Error::from_str("none"))), REPOSITORY_IDENTITY_UNAVAILABLE);
-        assert_eq!(repository_code_for(&RepositoryError::Operation(git2::Error::from_str("nope"))), REPOSITORY_OPERATION);
+        assert_eq!(
+            repository_code_for(&RepositoryError::MissingConfiguration),
+            REPOSITORY_UNAVAILABLE
+        );
+        assert_eq!(
+            repository_code_for(&RepositoryError::NotFound {
+                name: "main".into()
+            }),
+            REPOSITORY_NOT_FOUND
+        );
+        assert_eq!(
+            repository_code_for(&RepositoryError::Conflict {
+                message: "x".into()
+            }),
+            REPOSITORY_CONFLICT
+        );
+        assert_eq!(
+            repository_code_for(&RepositoryError::InvalidRequest {
+                message: "x".into()
+            }),
+            REPOSITORY_INVALID_REQUEST
+        );
+        assert_eq!(
+            repository_code_for(&RepositoryError::IdentityUnavailable(
+                git2::Error::from_str("none")
+            )),
+            REPOSITORY_IDENTITY_UNAVAILABLE
+        );
+        assert_eq!(
+            repository_code_for(&RepositoryError::Operation(git2::Error::from_str("nope"))),
+            REPOSITORY_OPERATION
+        );
     }
 
     #[test]
