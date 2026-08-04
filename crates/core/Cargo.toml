@@ -6,12 +6,17 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+diesel = { version = "2.3.11", features = [
+    "sqlite",
+    "returning_clauses_for_sqlite_3_35",
+] }
 directories = "6.0.0"
 git2 = { version = "0.20", features = ["vendored-libgit2"] }
-libsql = { version = "0.9.30", default-features = false, features = ["core"] }
+libsqlite3-sys = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.19"
+tokio = { version = "1", features = ["rt"] }
 toml = "1.1.4"
 
 [dev-dependencies]

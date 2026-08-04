@@ -2,9 +2,14 @@
 //!
 //! Mirrors every `cv:` field except `sections`. Every field is optional.
 
+use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::store::schema::profile as profile_table;
 use crate::store::{Store, StoreError};
+
+/// The `profile` row's fixed primary key.
+const PROFILE_ID: i32 = 1;
 
 /// A field rendercv accepts as either a single value or a list of them.
 ///
@@ -73,126 +78,127 @@ pub struct Profile {
     pub custom_connections: Vec<CustomConnection>,
 }
 
+/// The stored Profile: its JSON columns still encoded.
+#[derive(Queryable, Selectable, Insertable, AsChangeset)]
+#[diesel(table_name = profile_table)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(treat_none_as_null = true, treat_none_as_default_value = false)]
+struct ProfileRow {
+    name: Option<String>,
+    headline: Option<String>,
+    location: Option<String>,
+    photo: Option<String>,
+    email: Option<String>,
+    phone: Option<String>,
+    website: Option<String>,
+    social_networks: Option<String>,
+    custom_connections: Option<String>,
+}
+
+impl ProfileRow {
+    fn encode(profile: &Profile) -> Result<Self, StoreError> {
+        Ok(Self {
+            name: profile.name.clone(),
+            headline: profile.headline.clone(),
+            location: profile.location.clone(),
+            photo: profile.photo.clone(),
+            email: encode(profile.email.as_ref(), "email")?,
+            phone: encode(profile.phone.as_ref(), "phone")?,
+            website: encode(profile.website.as_ref(), "website")?,
+            social_networks: encode_list(&profile.social_networks, "social_networks")?,
+            custom_connections: encode_list(&profile.custom_connections, "custom_connections")?,
+        })
+    }
+
+    fn decode(self) -> Result<Profile, StoreError> {
+        Ok(Profile {
+            name: self.name,
+            headline: self.headline,
+            location: self.location,
+            photo: self.photo,
+            email: decode(self.email, "email")?,
+            phone: decode(self.phone, "phone")?,
+            website: decode(self.website, "website")?,
+            social_networks: decode(self.social_networks, "social_networks")?.unwrap_or_default(),
+            custom_connections: decode(self.custom_connections, "custom_connections")?
+                .unwrap_or_default(),
+        })
+    }
+}
+
 impl Store {
     /// Reads the Profile, yielding [`Profile::default`] when none has been written yet.
     pub async fn profile(&self) -> Result<Profile, StoreError> {
-        let mut rows = self
-            .connection()
-            .query(
-                "SELECT name, headline, location, photo, email, phone, website, \
-                 social_networks, custom_connections FROM profile WHERE id = 1",
-                (),
-            )
-            .await
-            .map_err(StoreError::ReadProfile)?;
+        let row = self
+            .with_connection(|connection| {
+                profile_table::table
+                    .find(PROFILE_ID)
+                    .select(ProfileRow::as_select())
+                    .first(connection)
+                    .optional()
+                    .map_err(StoreError::ReadProfile)
+            })
+            .await?;
 
-        let Some(row) = rows.next().await.map_err(StoreError::ReadProfile)? else {
-            return Ok(Profile::default());
-        };
-
-        Ok(Profile {
-            name: column(&row, 0)?,
-            headline: column(&row, 1)?,
-            location: column(&row, 2)?,
-            photo: column(&row, 3)?,
-            email: json_column(&row, 4, "email")?,
-            phone: json_column(&row, 5, "phone")?,
-            website: json_column(&row, 6, "website")?,
-            social_networks: json_column(&row, 7, "social_networks")?.unwrap_or_default(),
-            custom_connections: json_column(&row, 8, "custom_connections")?.unwrap_or_default(),
-        })
+        match row {
+            Some(row) => row.decode(),
+            None => Ok(Profile::default()),
+        }
     }
 
     /// Replaces the Profile wholesale.
     pub async fn set_profile(&self, profile: &Profile) -> Result<(), StoreError> {
-        let params = vec![
-            text(profile.name.as_deref()),
-            text(profile.headline.as_deref()),
-            text(profile.location.as_deref()),
-            text(profile.photo.as_deref()),
-            json(profile.email.as_ref(), "email")?,
-            json(profile.phone.as_ref(), "phone")?,
-            json(profile.website.as_ref(), "website")?,
-            json_list(&profile.social_networks, "social_networks")?,
-            json_list(&profile.custom_connections, "custom_connections")?,
-        ];
+        let row = ProfileRow::encode(profile)?;
 
-        self.connection()
-            .execute(
-                "INSERT INTO profile \
-                 (id, name, headline, location, photo, email, phone, website, \
-                 social_networks, custom_connections) \
-                 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT(id) DO UPDATE SET \
-                 name = excluded.name, headline = excluded.headline, \
-                 location = excluded.location, photo = excluded.photo, \
-                 email = excluded.email, phone = excluded.phone, \
-                 website = excluded.website, social_networks = excluded.social_networks, \
-                 custom_connections = excluded.custom_connections",
-                params,
-            )
-            .await
-            .map_err(StoreError::WriteProfile)?;
+        self.with_connection(move |connection| {
+            diesel::insert_into(profile_table::table)
+                .values((profile_table::id.eq(PROFILE_ID), &row))
+                .on_conflict(profile_table::id)
+                .do_update()
+                .set(&row)
+                .execute(connection)
+                .map_err(StoreError::WriteProfile)
+        })
+        .await?;
 
         Ok(())
     }
 }
 
-fn column(row: &libsql::Row, index: i32) -> Result<Option<String>, StoreError> {
-    row.get::<Option<String>>(index)
-        .map_err(StoreError::ReadProfile)
-}
-
-fn json_column<T: for<'de> Deserialize<'de>>(
-    row: &libsql::Row,
-    index: i32,
-    name: &'static str,
+fn decode<T: for<'de> Deserialize<'de>>(
+    stored: Option<String>,
+    column: &'static str,
 ) -> Result<Option<T>, StoreError> {
-    let Some(text) = column(row, index)? else {
+    let Some(stored) = stored else {
         return Ok(None);
     };
 
-    serde_json::from_str(&text)
+    serde_json::from_str(&stored)
         .map(Some)
-        .map_err(|source| StoreError::DecodeProfile {
-            column: name,
-            source,
-        })
+        .map_err(|source| StoreError::DecodeProfile { column, source })
 }
 
-fn text(value: Option<&str>) -> libsql::Value {
-    value.map_or(libsql::Value::Null, |value| {
-        libsql::Value::Text(value.to_string())
-    })
-}
-
-fn json<T: Serialize>(value: Option<&T>, name: &'static str) -> Result<libsql::Value, StoreError> {
-    let Some(value) = value else {
-        return Ok(libsql::Value::Null);
-    };
-
-    encode(value, name)
+fn encode<T: Serialize>(
+    value: Option<&T>,
+    column: &'static str,
+) -> Result<Option<String>, StoreError> {
+    value.map(|value| to_json(value, column)).transpose()
 }
 
 /// Encodes a list, storing SQL `NULL` for an empty one.
-fn json_list<T: Serialize>(values: &[T], name: &'static str) -> Result<libsql::Value, StoreError> {
+fn encode_list<T: Serialize>(
+    values: &[T],
+    column: &'static str,
+) -> Result<Option<String>, StoreError> {
     if values.is_empty() {
-        return Ok(libsql::Value::Null);
+        return Ok(None);
     }
 
-    encode(values, name)
+    to_json(values, column).map(Some)
 }
 
-fn encode<T: Serialize + ?Sized>(
-    value: &T,
-    name: &'static str,
-) -> Result<libsql::Value, StoreError> {
-    serde_json::to_string(value)
-        .map(libsql::Value::Text)
-        .map_err(|source| StoreError::EncodeProfile {
-            column: name,
-            source,
-        })
+fn to_json<T: Serialize + ?Sized>(value: &T, column: &'static str) -> Result<String, StoreError> {
+    serde_json::to_string(value).map_err(|source| StoreError::EncodeProfile { column, source })
 }
 
 #[cfg(test)]
@@ -351,13 +357,13 @@ mod tests {
         let (_dir, store) = open_temp_store().await;
         store.set_profile(&populated()).await.unwrap();
         store
-            .connection()
-            .execute(
-                "UPDATE profile SET social_networks = 'not json' WHERE id = 1",
-                (),
-            )
-            .await
-            .unwrap();
+            .with_connection(|connection| {
+                diesel::update(profile_table::table.find(PROFILE_ID))
+                    .set(profile_table::social_networks.eq("not json"))
+                    .execute(connection)
+                    .unwrap()
+            })
+            .await;
 
         let error = store.profile().await.unwrap_err();
 

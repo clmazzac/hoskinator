@@ -144,6 +144,11 @@ column. See ADR-0007. What that buys:
 3. **Types are checked at build time.** `check_for_backend(Sqlite)` on each row struct rejects a
    Rust field whose type does not match the SQL type declared for its column.
 
+**The one exception is FTS5 search.** `job_description_fts` is a virtual table, which `table!` cannot
+describe and Diesel's DSL has no `MATCH` operator for, so `job_descriptions(Some(query))` is written
+out as `sql_query` and bound by hand. It decodes by column name through `QueryableByName`, so the
+sharpest coupling is still gone; the table and column names in that one string are not checked.
+
 **What is still not checked:** a column added by a migration but never declared in `schema.rs`. The
 drift test selects what Diesel knows about, so it sees a missing column and not a surplus one. Such
 a column is invisible to the store rather than wrong, which is why it is left.

@@ -1,11 +1,18 @@
 //! Standalone Job Descriptions stored in the Master Store.
 
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 use serde::{Deserialize, Serialize};
 
+use crate::store::schema::job_description as job_description_table;
 use crate::store::{Store, StoreError};
 
 /// A saved role posting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Queryable, Selectable, QueryableByName,
+)]
+#[diesel(table_name = job_description_table)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct JobDescription {
     pub id: i64,
     pub title: Option<String>,
@@ -14,7 +21,8 @@ pub struct JobDescription {
 }
 
 /// The text and optional label for a new Job Description.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = job_description_table)]
 pub struct NewJobDescription {
     pub title: Option<String>,
     pub text: String,
@@ -26,46 +34,29 @@ impl Store {
         &self,
         job_description: &NewJobDescription,
     ) -> Result<JobDescription, StoreError> {
-        let mut rows = self
-            .connection()
-            .query(
-                "INSERT INTO job_description (title, text) VALUES (?, ?) \
-                 RETURNING id, title, text, created_at",
-                vec![
-                    text(job_description.title.as_deref()),
-                    libsql::Value::Text(job_description.text.clone()),
-                ],
-            )
-            .await
-            .map_err(StoreError::CreateJobDescription)?;
+        let row = job_description.clone();
 
-        let row = rows
-            .next()
-            .await
-            .map_err(StoreError::CreateJobDescription)?
-            .ok_or(StoreError::CreateJobDescription(
-                libsql::Error::QueryReturnedNoRows,
-            ))?;
-
-        decode(&row)
+        self.with_connection(move |connection| {
+            diesel::insert_into(job_description_table::table)
+                .values(row)
+                .returning(JobDescription::as_returning())
+                .get_result(connection)
+                .map_err(StoreError::CreateJobDescription)
+        })
+        .await
     }
 
     /// Reads the Job Description with `id`, if it exists.
     pub async fn job_description(&self, id: i64) -> Result<Option<JobDescription>, StoreError> {
-        let mut rows = self
-            .connection()
-            .query(
-                "SELECT id, title, text, created_at FROM job_description WHERE id = ?",
-                vec![libsql::Value::Integer(id)],
-            )
-            .await
-            .map_err(StoreError::ReadJobDescriptions)?;
-
-        let Some(row) = rows.next().await.map_err(StoreError::ReadJobDescriptions)? else {
-            return Ok(None);
-        };
-
-        decode(&row).map(Some)
+        self.with_connection(move |connection| {
+            job_description_table::table
+                .find(id)
+                .select(JobDescription::as_select())
+                .first(connection)
+                .optional()
+                .map_err(StoreError::ReadJobDescriptions)
+        })
+        .await
     }
 
     /// Lists Job Descriptions, optionally restricted by a full-text query.
@@ -73,67 +64,48 @@ impl Store {
         &self,
         query: Option<&str>,
     ) -> Result<Vec<JobDescription>, StoreError> {
-        let query = query.filter(|query| !query.trim().is_empty());
-        let mut rows = match query {
-            Some(query) => {
-                self.connection()
-                    .query(
-                        "SELECT job_description.id, job_description.title, \
-                         job_description.text, job_description.created_at \
-                         FROM job_description \
-                         JOIN job_description_fts \
-                         ON job_description_fts.rowid = job_description.id \
-                         WHERE job_description_fts MATCH ? \
-                         ORDER BY rank, job_description.id DESC",
-                        vec![libsql::Value::Text(query.to_owned())],
-                    )
-                    .await
-            }
-            None => {
-                self.connection()
-                    .query(
-                        "SELECT id, title, text, created_at FROM job_description \
-                         ORDER BY created_at DESC, id DESC",
-                        (),
-                    )
-                    .await
-            }
-        }
-        .map_err(StoreError::ReadJobDescriptions)?;
+        let query = query
+            .filter(|query| !query.trim().is_empty())
+            .map(str::to_owned);
 
-        let mut job_descriptions = Vec::new();
-        while let Some(row) = rows.next().await.map_err(StoreError::ReadJobDescriptions)? {
-            job_descriptions.push(decode(&row)?);
-        }
-        Ok(job_descriptions)
+        self.with_connection(move |connection| {
+            match query {
+                // FTS5 is a virtual table Diesel's schema cannot describe, so the one query
+                // that reaches it is written out and decoded by column name.
+                Some(query) => diesel::sql_query(
+                    "SELECT job_description.id, job_description.title, \
+                     job_description.text, job_description.created_at \
+                     FROM job_description \
+                     JOIN job_description_fts \
+                     ON job_description_fts.rowid = job_description.id \
+                     WHERE job_description_fts MATCH ? \
+                     ORDER BY rank, job_description.id DESC",
+                )
+                .bind::<Text, _>(query)
+                .load(connection),
+                None => job_description_table::table
+                    .order((
+                        job_description_table::created_at.desc(),
+                        job_description_table::id.desc(),
+                    ))
+                    .select(JobDescription::as_select())
+                    .load(connection),
+            }
+            .map_err(StoreError::ReadJobDescriptions)
+        })
+        .await
     }
 
     /// Deletes the Job Description with `id`, returning whether it existed.
     pub async fn delete_job_description(&self, id: i64) -> Result<bool, StoreError> {
-        self.connection()
-            .execute(
-                "DELETE FROM job_description WHERE id = ?",
-                vec![libsql::Value::Integer(id)],
-            )
-            .await
-            .map(|changed| changed > 0)
-            .map_err(StoreError::DeleteJobDescription)
+        self.with_connection(move |connection| {
+            diesel::delete(job_description_table::table.find(id))
+                .execute(connection)
+                .map(|changed| changed > 0)
+                .map_err(StoreError::DeleteJobDescription)
+        })
+        .await
     }
-}
-
-fn decode(row: &libsql::Row) -> Result<JobDescription, StoreError> {
-    Ok(JobDescription {
-        id: row.get(0).map_err(StoreError::ReadJobDescriptions)?,
-        title: row.get(1).map_err(StoreError::ReadJobDescriptions)?,
-        text: row.get(2).map_err(StoreError::ReadJobDescriptions)?,
-        created_at: row.get(3).map_err(StoreError::ReadJobDescriptions)?,
-    })
-}
-
-fn text(value: Option<&str>) -> libsql::Value {
-    value.map_or(libsql::Value::Null, |value| {
-        libsql::Value::Text(value.to_owned())
-    })
 }
 
 #[cfg(test)]

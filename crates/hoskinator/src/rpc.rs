@@ -301,6 +301,7 @@ impl JobDescriptionRpcServer for JobDescriptionApi {
 fn store_code_for(error: &StoreError) -> i32 {
     match error {
         StoreError::CreateDir { .. }
+        | StoreError::PathEncoding { .. }
         | StoreError::Open { .. }
         | StoreError::Wal { .. }
         | StoreError::Migrate { .. }

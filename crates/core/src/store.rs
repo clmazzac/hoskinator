@@ -1,12 +1,15 @@
 //! The Master Store.
 //!
-//! One libSQL connection. Opening runs any migrations the database has not seen.
+//! One SQLite connection behind Diesel. Opening runs any migrations the database has not seen.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
-use libsql::{Builder, Connection};
+use diesel::connection::SimpleConnection;
+use diesel::{Connection, SqliteConnection};
 
 mod migrations;
+pub(crate) mod schema;
 
 /// The Master Store could not be opened or read.
 #[derive(Debug, thiserror::Error)]
@@ -18,35 +21,38 @@ pub enum StoreError {
         source: std::io::Error,
     },
 
+    #[error("the store path {path} is not valid UTF-8")]
+    PathEncoding { path: PathBuf },
+
     #[error("could not open the store at {path}")]
     Open {
         path: PathBuf,
         #[source]
-        source: libsql::Error,
+        source: diesel::ConnectionError,
     },
 
     #[error("could not enable WAL mode on the store at {path}")]
     Wal {
         path: PathBuf,
         #[source]
-        source: libsql::Error,
+        source: diesel::result::Error,
     },
 
     #[error("could not apply migration {version}")]
     Migrate {
         version: i64,
         #[source]
-        source: libsql::Error,
+        source: diesel::result::Error,
     },
 
     #[error("could not read the store's schema version")]
-    SchemaVersion(#[source] libsql::Error),
+    SchemaVersion(#[source] diesel::result::Error),
 
     #[error("could not read the Profile")]
-    ReadProfile(#[source] libsql::Error),
+    ReadProfile(#[source] diesel::result::Error),
 
     #[error("could not write the Profile")]
-    WriteProfile(#[source] libsql::Error),
+    WriteProfile(#[source] diesel::result::Error),
 
     #[error("the stored Profile column `{column}` is not valid JSON")]
     DecodeProfile {
@@ -63,26 +69,27 @@ pub enum StoreError {
     },
 
     #[error("could not read a section")]
-    ReadSection(#[source] libsql::Error),
+    ReadSection(#[source] diesel::result::Error),
 
     #[error("could not write a section")]
-    WriteSection(#[source] libsql::Error),
+    WriteSection(#[source] diesel::result::Error),
+
+    #[error("could not create a Job Description")]
+    CreateJobDescription(#[source] diesel::result::Error),
+
+    #[error("could not read Job Descriptions")]
+    ReadJobDescriptions(#[source] diesel::result::Error),
+
+    #[error("could not delete a Job Description")]
+    DeleteJobDescription(#[source] diesel::result::Error),
 
     #[error(transparent)]
     Section(#[from] crate::section::SectionError),
-    #[error("could not create a Job Description")]
-    CreateJobDescription(#[source] libsql::Error),
-
-    #[error("could not read Job Descriptions")]
-    ReadJobDescriptions(#[source] libsql::Error),
-
-    #[error("could not delete a Job Description")]
-    DeleteJobDescription(#[source] libsql::Error),
 }
 
 /// The Master Store: every fact and accomplishment statement the user has accumulated.
 pub struct Store {
-    connection: Connection,
+    connection: Arc<Mutex<SqliteConnection>>,
 }
 
 impl Store {
@@ -97,45 +104,78 @@ impl Store {
             })?;
         }
 
-        let open_error = |source| StoreError::Open {
-            path: path.to_path_buf(),
-            source,
-        };
+        let path = path.to_path_buf();
+        let connection = blocking(move || establish(&path)).await?;
 
-        let database = Builder::new_local(path).build().await.map_err(open_error)?;
-        let connection = database.connect().map_err(open_error)?;
-
-        // Before any migration: a writer holding the database in rollback-journal mode would
-        // block readers for the length of the migration.
-        enable_wal(&connection, path).await?;
-        migrations::apply(&connection).await?;
-
-        Ok(Self { connection })
+        Ok(Self {
+            connection: Arc::new(Mutex::new(connection)),
+        })
     }
 
-    /// The underlying connection.
-    pub(crate) fn connection(&self) -> &Connection {
-        &self.connection
+    /// Runs `work` against the connection on a blocking thread.
+    pub(crate) async fn with_connection<F, T>(&self, work: F) -> T
+    where
+        F: FnOnce(&mut SqliteConnection) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let connection = Arc::clone(&self.connection);
+
+        blocking(move || {
+            // A poisoned lock still holds a usable connection.
+            let mut connection = connection.lock().unwrap_or_else(PoisonError::into_inner);
+            work(&mut connection)
+        })
+        .await
     }
 }
 
+/// Opens the database, puts it in WAL mode, and migrates it.
+fn establish(path: &Path) -> Result<SqliteConnection, StoreError> {
+    let url = path.to_str().ok_or_else(|| StoreError::PathEncoding {
+        path: path.to_path_buf(),
+    })?;
+
+    let mut connection = SqliteConnection::establish(url).map_err(|source| StoreError::Open {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    // Before any migration: a writer holding the database in rollback-journal mode would
+    // block readers for the length of the migration.
+    enable_wal(&mut connection, path)?;
+    migrations::apply(&mut connection)?;
+
+    Ok(connection)
+}
+
 /// Switches the database to write-ahead logging.
-async fn enable_wal(connection: &Connection, path: &Path) -> Result<(), StoreError> {
-    // `journal_mode` reports the mode it settled on, so it is a query rather than an execute.
+fn enable_wal(connection: &mut SqliteConnection, path: &Path) -> Result<(), StoreError> {
     connection
-        .query("PRAGMA journal_mode = WAL", ())
-        .await
-        .map(|_| ())
+        .batch_execute("PRAGMA journal_mode = WAL")
         .map_err(|source| StoreError::Wal {
             path: path.to_path_buf(),
             source,
         })
 }
 
+/// Runs blocking database work off the async runtime, propagating a panic in it.
+async fn blocking<F, T>(work: F) -> T
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::task::spawn_blocking(work).await {
+        Ok(value) => value,
+        Err(error) => std::panic::resume_unwind(error.into_panic()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use diesel::prelude::*;
+    use diesel::sql_types::{BigInt, Text};
     use tempfile::TempDir;
 
     /// Opens a store under a fresh temporary directory, which the caller must keep alive.
@@ -146,16 +186,45 @@ mod tests {
         (dir, store)
     }
 
-    async fn text(store: &Store, sql: &str) -> String {
-        let mut rows = store.connection().query(sql, ()).await.unwrap();
-        let row = rows.next().await.unwrap().expect("a row");
-        row.get::<String>(0).unwrap()
+    #[derive(QueryableByName)]
+    struct JournalMode {
+        #[diesel(sql_type = Text)]
+        journal_mode: String,
     }
 
-    async fn number(store: &Store, sql: &str) -> i64 {
-        let mut rows = store.connection().query(sql, ()).await.unwrap();
-        let row = rows.next().await.unwrap().expect("a row");
-        row.get::<i64>(0).unwrap()
+    async fn journal_mode(store: &Store) -> String {
+        store
+            .with_connection(|connection| {
+                diesel::sql_query("PRAGMA journal_mode")
+                    .get_result::<JournalMode>(connection)
+                    .unwrap()
+                    .journal_mode
+            })
+            .await
+    }
+
+    #[derive(QueryableByName)]
+    struct Found {
+        #[diesel(sql_type = BigInt)]
+        found: i64,
+    }
+
+    /// Counts the `sqlite_master` rows `sql` selects, which must alias the count as `found`.
+    async fn objects_named(store: &Store, sql: &'static str) -> i64 {
+        store
+            .with_connection(move |connection| {
+                diesel::sql_query(sql)
+                    .get_result::<Found>(connection)
+                    .unwrap()
+                    .found
+            })
+            .await
+    }
+
+    async fn schema_version(store: &Store) -> i64 {
+        store
+            .with_connection(|connection| migrations::schema_version(connection).unwrap())
+            .await
     }
 
     #[tokio::test]
@@ -172,72 +241,72 @@ mod tests {
     async fn opening_leaves_the_database_in_wal_mode() {
         let (_dir, store) = open_temp_store().await;
 
-        assert_eq!(text(&store, "PRAGMA journal_mode").await, "wal");
+        assert_eq!(journal_mode(&store).await, "wal");
     }
 
     #[tokio::test]
     async fn opening_migrates_to_the_latest_version() {
         let (_dir, store) = open_temp_store().await;
 
-        assert_eq!(
-            number(&store, "PRAGMA user_version").await,
-            migrations::LATEST_VERSION
-        );
+        assert_eq!(schema_version(&store).await, migrations::LATEST_VERSION);
     }
 
     #[tokio::test]
-    async fn the_profile_table_exists_after_migrating() {
+    async fn every_declared_column_exists_after_migrating() {
         let (_dir, store) = open_temp_store().await;
 
-        let count = number(
-            &store,
-            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'profile'",
-        )
-        .await;
-
-        assert_eq!(count, 1);
+        store
+            .with_connection(|connection| {
+                schema::profile::table
+                    .select(schema::profile::all_columns)
+                    .execute(connection)
+                    .expect("selecting every profile column");
+                schema::section::table
+                    .select(schema::section::all_columns)
+                    .execute(connection)
+                    .expect("selecting every section column");
+                schema::job_description::table
+                    .select(schema::job_description::all_columns)
+                    .execute(connection)
+                    .expect("selecting every job_description column");
+            })
+            .await;
     }
 
     #[tokio::test]
     async fn the_job_description_table_and_fts_index_exist_after_migrating() {
         let (_dir, store) = open_temp_store().await;
 
-        let count = number(
+        let found = objects_named(
             &store,
-            "SELECT count(*) FROM sqlite_master \
+            "SELECT count(*) AS found FROM sqlite_master \
              WHERE name IN ('job_description', 'job_description_fts')",
         )
         .await;
 
-        assert_eq!(count, 2);
+        assert_eq!(found, 2);
     }
 
     #[tokio::test]
     async fn opening_a_version_one_store_applies_the_job_description_migration() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("hoskinator.db");
-        let database = Builder::new_local(&path).build().await.unwrap();
-        let connection = database.connect().unwrap();
+        let mut connection = SqliteConnection::establish(path.to_str().unwrap()).unwrap();
         connection
-            .execute_batch(&format!(
+            .batch_execute(&format!(
                 "{}\nPRAGMA user_version = 1;",
                 include_str!("../migrations/0001_profile.sql")
             ))
-            .await
             .unwrap();
         drop(connection);
-        drop(database);
 
         let store = Store::open(&path).await.unwrap();
 
+        assert_eq!(schema_version(&store).await, migrations::LATEST_VERSION);
         assert_eq!(
-            number(&store, "PRAGMA user_version").await,
-            migrations::LATEST_VERSION
-        );
-        assert_eq!(
-            number(
+            objects_named(
                 &store,
-                "SELECT count(*) FROM sqlite_master \
+                "SELECT count(*) AS found FROM sqlite_master \
                  WHERE name = 'job_description_fts'",
             )
             .await,
@@ -253,10 +322,7 @@ mod tests {
         Store::open(&path).await.unwrap();
         let reopened = Store::open(&path).await.expect("reopening the store");
 
-        assert_eq!(
-            number(&reopened, "PRAGMA user_version").await,
-            migrations::LATEST_VERSION
-        );
+        assert_eq!(schema_version(&reopened).await, migrations::LATEST_VERSION);
     }
 
     #[tokio::test]
@@ -266,29 +332,43 @@ mod tests {
 
         let store = Store::open(&path).await.unwrap();
         store
-            .connection()
-            .execute("INSERT INTO profile (id, name) VALUES (1, 'Ada')", ())
-            .await
-            .unwrap();
+            .with_connection(|connection| {
+                diesel::insert_into(schema::profile::table)
+                    .values((schema::profile::id.eq(1), schema::profile::name.eq("Ada")))
+                    .execute(connection)
+                    .unwrap()
+            })
+            .await;
         drop(store);
 
         let reopened = Store::open(&path).await.unwrap();
+        let name = reopened
+            .with_connection(|connection| {
+                schema::profile::table
+                    .select(schema::profile::name)
+                    .first::<Option<String>>(connection)
+                    .unwrap()
+            })
+            .await;
 
-        assert_eq!(text(&reopened, "SELECT name FROM profile").await, "Ada");
+        assert_eq!(name.as_deref(), Some("Ada"));
     }
 
     #[tokio::test]
     async fn the_profile_table_holds_at_most_one_row() {
         let (_dir, store) = open_temp_store().await;
 
-        store
-            .connection()
-            .execute("INSERT INTO profile (id) VALUES (1)", ())
-            .await
-            .unwrap();
         let second = store
-            .connection()
-            .execute("INSERT INTO profile (id) VALUES (2)", ())
+            .with_connection(|connection| {
+                diesel::insert_into(schema::profile::table)
+                    .values(schema::profile::id.eq(1))
+                    .execute(connection)
+                    .unwrap();
+
+                diesel::insert_into(schema::profile::table)
+                    .values(schema::profile::id.eq(2))
+                    .execute(connection)
+            })
             .await;
 
         assert!(second.is_err(), "a second row should be rejected");
