@@ -136,3 +136,29 @@ that stores its rendercv fragment verbatim would serve them.
 
 Deliberately not built: nothing needs it before assembly (#10), and it is a user-facing surface, so
 its design is the maintainer's.
+
+## What the hand-written SQL rests on (Slice 2, #3)
+
+Every query in `hoskinator-core` is a hand-written string passed to `libsql`. Nothing checks it until
+it runs. Four things it depends on, none of them enforced by the compiler:
+
+1. **Positional decoding.** `row.get::<T>(index)` is tied to the order of the `SELECT` list.
+   `Profile` reads nine columns by index in `column`/`json_column`, in a different function from the
+   query itself; adding or reordering a column in the `SELECT` silently shifts every index after it.
+   `Section::decode` has the same coupling over two columns.
+2. **Names matching the migrations by hand.** Table and column names are repeated in the query
+   strings, and nothing ties them to `migrations/*.sql`.
+3. **Runtime type agreement.** `STRICT` tables reject a wrong type, but at execution, not at build.
+4. **Placeholder arity.** The `?` count must match the parameter tuple; a mismatch is a runtime
+   error.
+
+**Why it stands:** the `libsql` decision at the top of this file already accepted the cost — no
+compile-time SQL verification — and named the compensation: real test coverage of the store. Every
+query above is exercised by a test against a migrated database.
+
+**Why it is not simply fixed:** `sqlx` is the crate that offers compile-time verification, and it
+ships its own SQLite driver (`sqlx-sqlite`). Adopting it means that driver in place of `libsql`,
+which was chosen to keep the deferred Turso sync a config change rather than a port. That trade is a
+decision, not a refactor.
+
+**Tracked in #43.**
