@@ -70,6 +70,14 @@ pub enum StoreError {
 
     #[error(transparent)]
     Section(#[from] crate::section::SectionError),
+    #[error("could not create a Job Description")]
+    CreateJobDescription(#[source] libsql::Error),
+
+    #[error("could not read Job Descriptions")]
+    ReadJobDescriptions(#[source] libsql::Error),
+
+    #[error("could not delete a Job Description")]
+    DeleteJobDescription(#[source] libsql::Error),
 }
 
 /// The Master Store: every fact and accomplishment statement the user has accumulated.
@@ -188,6 +196,53 @@ mod tests {
         .await;
 
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn the_job_description_table_and_fts_index_exist_after_migrating() {
+        let (_dir, store) = open_temp_store().await;
+
+        let count = number(
+            &store,
+            "SELECT count(*) FROM sqlite_master \
+             WHERE name IN ('job_description', 'job_description_fts')",
+        )
+        .await;
+
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn opening_a_version_one_store_applies_the_job_description_migration() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("hoskinator.db");
+        let database = Builder::new_local(&path).build().await.unwrap();
+        let connection = database.connect().unwrap();
+        connection
+            .execute_batch(&format!(
+                "{}\nPRAGMA user_version = 1;",
+                include_str!("../migrations/0001_profile.sql")
+            ))
+            .await
+            .unwrap();
+        drop(connection);
+        drop(database);
+
+        let store = Store::open(&path).await.unwrap();
+
+        assert_eq!(
+            number(&store, "PRAGMA user_version").await,
+            migrations::LATEST_VERSION
+        );
+        assert_eq!(
+            number(
+                &store,
+                "SELECT count(*) FROM sqlite_master \
+                 WHERE name = 'job_description_fts'",
+            )
+            .await,
+            1
+        );
     }
 
     #[tokio::test]

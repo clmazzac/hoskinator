@@ -2,27 +2,39 @@ import { useEffect, useState } from "react";
 
 import {
   ENTRY_TYPES,
+  createJobDescription,
   createSection,
+  deleteJobDescription,
   deleteSection,
+  getJobDescription,
   getProfile,
+  listJobDescriptions,
   listSections,
   renameSection,
   retypeSection,
   setProfile,
+  type JobDescription,
   type Section,
 } from "./rpc";
 
 /**
  * A harness for exercising the JSON-RPC contract from a browser, not the product UI.
  *
- * Edits the Profile as raw JSON.
+ * Edits the Profile as raw JSON and Job Descriptions as pasted posting text.
  */
 export default function App() {
   const [text, setText] = useState("");
   const [status, setStatus] = useState("Loading…");
+  const [title, setTitle] = useState("");
+  const [jobText, setJobText] = useState("");
+  const [query, setQuery] = useState("");
+  const [jobDescriptions, setJobDescriptions] = useState<JobDescription[]>([]);
+  const [selected, setSelected] = useState<JobDescription | null>(null);
+  const [jobDescriptionStatus, setJobDescriptionStatus] = useState("Loading…");
 
   useEffect(() => {
     load();
+    loadJobDescriptions();
   }, []);
 
   async function load() {
@@ -43,23 +55,132 @@ export default function App() {
     }
   }
 
+  async function loadJobDescriptions() {
+    try {
+      const search = query.trim();
+      setJobDescriptions(await listJobDescriptions(search || null));
+      setJobDescriptionStatus("Loaded.");
+    } catch (error) {
+      setJobDescriptionStatus(`Failed: ${(error as Error).message}`);
+    }
+  }
+
+  async function create() {
+    try {
+      const created = await createJobDescription({
+        title: title.trim() || undefined,
+        text: jobText,
+      });
+      setSelected(created);
+      setTitle("");
+      setJobText("");
+      await loadJobDescriptions();
+      setJobDescriptionStatus("Created.");
+    } catch (error) {
+      setJobDescriptionStatus(`Failed: ${(error as Error).message}`);
+    }
+  }
+
+  async function inspect(id: number) {
+    try {
+      const jobDescription = await getJobDescription(id);
+      setSelected(jobDescription);
+      setJobDescriptionStatus(
+        jobDescription ? "Loaded Job Description." : "Job Description no longer exists.",
+      );
+    } catch (error) {
+      setJobDescriptionStatus(`Failed: ${(error as Error).message}`);
+    }
+  }
+
+  async function remove(id: number) {
+    try {
+      const deleted = await deleteJobDescription(id);
+      if (selected?.id === id) {
+        setSelected(null);
+      }
+      await loadJobDescriptions();
+      setJobDescriptionStatus(deleted ? "Deleted." : "Job Description no longer exists.");
+    } catch (error) {
+      setJobDescriptionStatus(`Failed: ${(error as Error).message}`);
+    }
+  }
+
   return (
     <main>
       <h1>Hoskinator</h1>
-      <p>Profile, as JSON-RPC returns it.</p>
-      <textarea
-        rows={24}
-        cols={72}
-        value={text}
-        spellCheck={false}
-        aria-label="Profile as JSON"
-        onChange={(event) => setText(event.target.value)}
-      />
-      <p>
-        <button onClick={load}>Reload</button>{" "}
-        <button onClick={save}>Save</button> <span>{status}</span>
-      </p>
+      <section>
+        <h2>Profile</h2>
+        <p>Profile, as JSON-RPC returns it.</p>
+        <textarea
+          rows={24}
+          cols={72}
+          value={text}
+          spellCheck={false}
+          aria-label="Profile as JSON"
+          onChange={(event) => setText(event.target.value)}
+        />
+        <p>
+          <button onClick={load}>{"Reload"}</button>{" "}
+          <button onClick={save}>{"Save"}</button> <span>{status}</span>
+        </p>
+      </section>
+
+      <hr />
+
       <Sections />
+
+      <hr />
+
+      <section>
+        <h2>Job Descriptions</h2>
+        <p>
+          <label>
+            Title or label
+            <input value={title} onChange={(event) => setTitle(event.target.value)} />
+          </label>
+        </p>
+        <p>
+          <label>
+            Pasted posting text
+            <br />
+            <textarea
+              rows={16}
+              cols={72}
+              value={jobText}
+              spellCheck={false}
+              aria-label="Pasted Job Description"
+              onChange={(event) => setJobText(event.target.value)}
+            />
+          </label>
+        </p>
+        <p>
+          <button onClick={create}>Create</button>
+        </p>
+
+        <p>
+          <label>
+            Full-text search
+            <input value={query} onChange={(event) => setQuery(event.target.value)} />
+          </label>{" "}
+          <button onClick={loadJobDescriptions}>List</button> <span>{jobDescriptionStatus}</span>
+        </p>
+        <ul>
+          {jobDescriptions.map((jobDescription) => (
+            <li key={jobDescription.id}>
+              <button onClick={() => inspect(jobDescription.id)}>
+                {jobDescription.title || `(untitled #${jobDescription.id})`}
+              </button>{" "}
+              <button onClick={() => remove(jobDescription.id)}>Delete</button>
+            </li>
+          ))}
+        </ul>
+
+        <h3>Selected Job Description</h3>
+        <pre aria-label="Selected Job Description">
+          {selected ? JSON.stringify(selected, null, 2) : "Select a Job Description."}
+        </pre>
+      </section>
     </main>
   );
 }

@@ -38,6 +38,22 @@ enum Command {
         #[command(subcommand)]
         action: SectionAction,
     },
+
+    /// Creates and manages standalone Job Descriptions.
+    #[command(name = "jd")]
+    JobDescription {
+        #[command(subcommand)]
+        action: JobDescriptionAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileAction {
+    /// Prints the stored Profile as JSON.
+    Get,
+
+    /// Replaces the stored Profile with the JSON on standard input.
+    Set,
 }
 
 #[derive(Subcommand)]
@@ -70,12 +86,18 @@ enum SectionAction {
 }
 
 #[derive(Subcommand)]
-enum ProfileAction {
-    /// Prints the stored Profile as JSON.
-    Get,
+enum JobDescriptionAction {
+    /// Creates a Job Description from JSON on standard input.
+    Create,
 
-    /// Replaces the stored Profile with the JSON on standard input.
-    Set,
+    /// Prints one Job Description as JSON.
+    Get { id: i64 },
+
+    /// Prints Job Descriptions, optionally matching a full-text query.
+    List { query: Option<String> },
+
+    /// Deletes one Job Description.
+    Delete { id: i64 },
 }
 
 #[tokio::main]
@@ -106,6 +128,16 @@ async fn main() -> ExitCode {
             }
             SectionAction::Delete { name } => {
                 cli::section_delete(port, &name).await.map_err(Into::into)
+            }
+        },
+        Command::JobDescription { action } => match action {
+            JobDescriptionAction::Create => cli::jd_create(port).await.map_err(Into::into),
+            JobDescriptionAction::Get { id } => cli::jd_get(port, id).await.map_err(Into::into),
+            JobDescriptionAction::List { query } => {
+                cli::jd_list(port, query).await.map_err(Into::into)
+            }
+            JobDescriptionAction::Delete { id } => {
+                cli::jd_delete(port, id).await.map_err(Into::into)
             }
         },
     };
@@ -242,6 +274,41 @@ mod tests {
             arguments.command,
             Command::Profile {
                 action: ProfileAction::Set
+            }
+        ));
+    }
+
+    #[test]
+    fn job_description_actions_have_their_own_subcommands() {
+        let create = Cli::parse_from(["hoskinator", "jd", "create"]);
+        let get = Cli::parse_from(["hoskinator", "jd", "get", "17"]);
+        let list = Cli::parse_from(["hoskinator", "jd", "list", "Rust"]);
+        let delete = Cli::parse_from(["hoskinator", "jd", "delete", "17"]);
+
+        assert!(matches!(
+            create.command,
+            Command::JobDescription {
+                action: JobDescriptionAction::Create
+            }
+        ));
+        assert!(matches!(
+            get.command,
+            Command::JobDescription {
+                action: JobDescriptionAction::Get { id: 17 }
+            }
+        ));
+        assert!(matches!(
+            list.command,
+            Command::JobDescription {
+                action: JobDescriptionAction::List {
+                    query: Some(query)
+                }
+            } if query == "Rust"
+        ));
+        assert!(matches!(
+            delete.command,
+            Command::JobDescription {
+                action: JobDescriptionAction::Delete { id: 17 }
             }
         ));
     }

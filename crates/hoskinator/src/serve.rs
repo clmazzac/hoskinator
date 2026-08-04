@@ -15,7 +15,10 @@ use hoskinator_core::home::{Home, HomeError};
 use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
-use crate::rpc::{ProfileApi, ProfileRpcServer, SectionApi, SectionRpcServer};
+use crate::rpc::{
+    JobDescriptionApi, JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, SectionApi,
+    SectionRpcServer,
+};
 
 /// Port the daemon binds unless told otherwise.
 pub const DEFAULT_PORT: u16 = 8737;
@@ -69,7 +72,8 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
 fn router(store: Arc<Store>) -> Result<Router, ServeError> {
     let mut module = RpcModule::new(());
     module.merge(ProfileApi::new(Arc::clone(&store)).into_rpc())?;
-    module.merge(SectionApi::new(store).into_rpc())?;
+    module.merge(SectionApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(JobDescriptionApi::new(store).into_rpc())?;
 
     Ok(Router::new()
         .route(RPC_PATH, post(dispatch))
@@ -115,6 +119,7 @@ mod tests {
 
     use axum::body::Body;
     use axum::http::{Request as HttpRequest, StatusCode};
+    use hoskinator_core::job_description::NewJobDescription;
     use hoskinator_core::profile::{OneOrMany, Profile};
     use tempfile::TempDir;
     use tower::ServiceExt;
@@ -346,6 +351,55 @@ mod tests {
         .await;
 
         assert!(answer.get("error").is_some(), "got {answer}");
+    }
+
+    #[tokio::test]
+    async fn job_description_crud_and_search_work_over_http() {
+        let (_dir, router) = test_router().await;
+        let input = NewJobDescription {
+            title: Some("Systems engineer".into()),
+            text: "Build reliable Rust services.".into(),
+        };
+        let params = serde_json::to_string(&input).unwrap();
+
+        let created = call(
+            router.clone(),
+            &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"jd.create","params":[{params}]}}"#),
+        )
+        .await;
+        let id = created["result"]["id"].as_i64().unwrap();
+        assert_eq!(created["result"]["title"], "Systems engineer");
+        assert_eq!(created["result"]["text"], "Build reliable Rust services.");
+        assert!(created["result"]["created_at"].as_str().is_some());
+
+        let listed = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"jd.list","params":["Rust"]}"#,
+        )
+        .await;
+        assert_eq!(listed["result"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["result"][0]["id"], id);
+
+        let got = call(
+            router.clone(),
+            &format!(r#"{{"jsonrpc":"2.0","id":3,"method":"jd.get","params":[{id}]}}"#),
+        )
+        .await;
+        assert_eq!(got["result"], created["result"]);
+
+        let deleted = call(
+            router.clone(),
+            &format!(r#"{{"jsonrpc":"2.0","id":4,"method":"jd.delete","params":[{id}]}}"#),
+        )
+        .await;
+        assert_eq!(deleted["result"], true);
+
+        let missing = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":5,"method":"jd.get","params":[{id}]}}"#),
+        )
+        .await;
+        assert!(missing["result"].is_null());
     }
 
     #[tokio::test]

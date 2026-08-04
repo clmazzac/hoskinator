@@ -9,6 +9,18 @@ export class RpcFailure extends Error {
   }
 }
 
+export interface JobDescription {
+  id: number;
+  title: string | null;
+  text: string;
+  created_at: string;
+}
+
+export interface NewJobDescription {
+  title?: string;
+  text: string;
+}
+
 let nextId = 1;
 
 async function call<T>(method: string, params: unknown[]): Promise<T> {
@@ -74,4 +86,24 @@ export function retypeSection(name: string, entryType: string): Promise<Section>
 
 export function deleteSection(name: string): Promise<null> {
   return call<null>("section.delete", [name]);
+}
+
+export function createJobDescription(
+  jobDescription: NewJobDescription,
+): Promise<JobDescription> {
+  return call("jd.create", [jobDescription]);
+}
+
+export function getJobDescription(id: number): Promise<JobDescription | null> {
+  return call("jd.get", [id]);
+}
+
+export function listJobDescriptions(
+  query: string | null = null,
+): Promise<JobDescription[]> {
+  return call("jd.list", [query]);
+}
+
+export function deleteJobDescription(id: number): Promise<boolean> {
+  return call("jd.delete", [id]);
 }
