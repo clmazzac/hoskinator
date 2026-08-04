@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use hoskinator_core::profile::Profile;
+use hoskinator_core::section::SectionError;
 use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
@@ -18,6 +19,12 @@ pub const STORE_CORRUPT: i32 = -32002;
 
 /// The store was reached but the read or write failed.
 pub const STORE_IO: i32 = -32003;
+
+/// The request described a section that cannot exist.
+pub const SECTION_INVALID: i32 = -32004;
+
+/// The request named a section that is not there.
+pub const SECTION_NOT_FOUND: i32 = -32005;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -61,7 +68,15 @@ fn code_for(error: &StoreError) -> i32 {
         StoreError::DecodeProfile { .. } => STORE_CORRUPT,
         StoreError::ReadProfile(_)
         | StoreError::WriteProfile(_)
-        | StoreError::EncodeProfile { .. } => STORE_IO,
+        | StoreError::EncodeProfile { .. }
+        | StoreError::ReadSection(_)
+        | StoreError::WriteSection(_) => STORE_IO,
+        StoreError::Section(error) => match error {
+            SectionError::BlankName
+            | SectionError::DuplicateName { .. }
+            | SectionError::UnknownEntryType(_) => SECTION_INVALID,
+            SectionError::NoSuchSection { .. } => SECTION_NOT_FOUND,
+        },
     }
 }
 
