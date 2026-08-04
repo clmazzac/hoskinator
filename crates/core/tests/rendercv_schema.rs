@@ -3,6 +3,7 @@
 use hoskinator_core::profile::{
     CustomConnection, OneOrMany, Profile, SocialNetwork, SocialNetworkName,
 };
+use hoskinator_core::section::EntryType;
 use serde_json::{Value, json};
 
 /// rendercv's own emitted JSON Schema.
@@ -125,6 +126,55 @@ fn the_vendored_schema_matches_the_installed_rendercv() {
         reported.contains(SCHEMA_VERSION),
         "fixture is from rendercv {SCHEMA_VERSION}, but `rendercv --version` said {reported:?}"
     );
+}
+
+/// A minimal entry of the given type, carrying only rendercv's required fields.
+fn entry(entry_type: EntryType) -> Value {
+    match entry_type {
+        EntryType::Text => json!("A line of prose."),
+        EntryType::OneLine => json!({ "label": "Languages", "details": "Rust, Python" }),
+        EntryType::Normal => json!({ "name": "Hoskinator" }),
+        EntryType::Experience => json!({ "company": "Acme", "position": "Engineer" }),
+        EntryType::Education => json!({ "institution": "Cornell", "area": "CS" }),
+        EntryType::Publication => json!({ "title": "A Paper", "authors": ["Ada"] }),
+        EntryType::Bullet => json!({ "bullet": "Shipped it." }),
+        EntryType::Numbered => json!({ "number": "Shipped it." }),
+        EntryType::ReversedNumbered => json!({ "reversed_number": "Shipped it." }),
+    }
+}
+
+/// Wraps a section's entries as a rendercv document.
+fn with_section(entries: Value) -> Value {
+    json!({ "cv": { "sections": { "Stuff": entries } } })
+}
+
+#[test]
+fn every_entry_type_is_an_arm_rendercv_accepts() {
+    for entry_type in EntryType::ALL {
+        let document = with_section(json!([entry(entry_type), entry(entry_type)]));
+
+        let errors = errors(&document);
+
+        assert!(errors.is_empty(), "{entry_type} rejected: {errors:#?}");
+    }
+}
+
+#[test]
+fn a_section_mixing_entry_types_is_rejected() {
+    for entry_type in EntryType::ALL {
+        for other in EntryType::ALL {
+            if entry_type == other {
+                continue;
+            }
+
+            let document = with_section(json!([entry(entry_type), entry(other)]));
+
+            assert!(
+                !errors(&document).is_empty(),
+                "{entry_type} mixed with {other} should not validate"
+            );
+        }
+    }
 }
 
 const NETWORKS: [SocialNetworkName; 17] = [

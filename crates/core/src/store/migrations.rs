@@ -9,10 +9,16 @@ use super::StoreError;
 /// Every migration, in the order they must be applied.
 ///
 /// A migration is never edited once it has shipped; correcting the schema means adding another.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../../migrations/0001_profile.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../../migrations/0001_profile.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../../migrations/0002_section.sql"),
+    },
+];
 
 struct Migration {
     version: i64,

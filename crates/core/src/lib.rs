@@ -9,4 +9,5 @@
 pub mod config;
 pub mod home;
 pub mod profile;
+pub mod section;
 pub mod store;

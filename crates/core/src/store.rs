@@ -61,6 +61,15 @@ pub enum StoreError {
         #[source]
         source: serde_json::Error,
     },
+
+    #[error("could not read a section")]
+    ReadSection(#[source] libsql::Error),
+
+    #[error("could not write a section")]
+    WriteSection(#[source] libsql::Error),
+
+    #[error(transparent)]
+    Section(#[from] crate::section::SectionError),
 }
 
 /// The Master Store: every fact and accomplishment statement the user has accumulated.
