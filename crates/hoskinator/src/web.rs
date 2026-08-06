@@ -89,13 +89,11 @@ mod tests {
         match entry_type {
             EntryType::Text => serde_json::json!("A line of prose."),
             EntryType::OneLine => serde_json::json!({ "label": "Languages", "details": "Rust" }),
-            EntryType::Normal => serde_json::json!({ "name": "Hoskinator", "highlights": ["It"] }),
-            EntryType::Experience => serde_json::json!({
-                "company": "Acme", "position": "Engineer", "highlights": ["It"]
-            }),
-            EntryType::Education => serde_json::json!({
-                "institution": "Cornell", "area": "CS", "highlights": ["It"]
-            }),
+            EntryType::Normal => serde_json::json!({ "name": "Hoskinator" }),
+            EntryType::Experience => {
+                serde_json::json!({ "company": "Acme", "position": "Engineer" })
+            }
+            EntryType::Education => serde_json::json!({ "institution": "Cornell", "area": "CS" }),
             EntryType::Publication => {
                 serde_json::json!({ "title": "A Paper", "authors": ["Ada"] })
             }

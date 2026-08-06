@@ -4,7 +4,7 @@
 export const ENTRY_FIELDS: Record<string, readonly string[]> = {
   "text": [],
   "one-line": ["label", "details"],
-  "normal": ["name", "location", "date", "start_date", "end_date", "summary", "highlights"],
+  "normal": ["name", "location", "date", "start_date", "end_date", "summary"],
   "experience": [
     "company",
     "position",
@@ -13,7 +13,6 @@ export const ENTRY_FIELDS: Record<string, readonly string[]> = {
     "start_date",
     "end_date",
     "summary",
-    "highlights",
   ],
   "education": [
     "institution",
@@ -24,7 +23,6 @@ export const ENTRY_FIELDS: Record<string, readonly string[]> = {
     "start_date",
     "end_date",
     "summary",
-    "highlights",
   ],
   "publication": ["title", "authors", "doi", "url", "journal", "date", "summary"],
   "bullet": ["bullet"],
@@ -33,7 +31,7 @@ export const ENTRY_FIELDS: Record<string, readonly string[]> = {
 };
 
 /** Fields holding a list of strings, written one per line. */
-export const LIST_FIELDS = ["highlights", "authors"] as const;
+export const LIST_FIELDS = ["authors"] as const;
 
 /** The key a text entry's single value is held under in the form. */
 export const TEXT_FIELD = "text";

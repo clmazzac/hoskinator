@@ -40,6 +40,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    bullet (id) {
+        id -> BigInt,
+        entry_id -> BigInt,
+        position -> Integer,
+    }
+}
+
+diesel::table! {
+    variant (id) {
+        id -> BigInt,
+        bullet_id -> BigInt,
+        text -> Text,
+        note -> Nullable<Text>,
+        is_default -> Bool,
+    }
+}
+
+diesel::table! {
     section (name) {
         name -> Text,
         entry_type -> Text,
