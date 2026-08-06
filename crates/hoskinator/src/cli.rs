@@ -12,7 +12,7 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
 use crate::rpc::{
     BulletRpcClient, EntryRpcClient, JobDescriptionRpcClient, ProfileRpcClient,
-    RepositoryRpcClient, SectionRpcClient,
+    RepositoryRpcClient, SearchRpcClient, SectionRpcClient,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -385,6 +385,16 @@ pub async fn variant_delete(port: u16, id: i64) -> Result<(), CliError> {
         .variant_delete(id)
         .await
         .map_err(|source| classify(source, port))
+}
+
+/// Prints what a query matches, best first.
+pub async fn search(port: u16, query: &str) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .search_query(query.to_owned())
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
 }
 
 /// Creates a Job Description from JSON on standard input and prints its record.

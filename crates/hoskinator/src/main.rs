@@ -55,6 +55,9 @@ enum Command {
         action: VariantAction,
     },
 
+    /// Searches the Master Store.
+    Search { query: String },
+
     /// Creates and manages standalone Job Descriptions.
     #[command(name = "jd")]
     JobDescription {
@@ -290,6 +293,7 @@ async fn main() -> ExitCode {
             }
             VariantAction::Delete { id } => cli::variant_delete(port, id).await.map_err(Into::into),
         },
+        Command::Search { query } => cli::search(port, &query).await.map_err(Into::into),
         Command::JobDescription { action } => match action {
             JobDescriptionAction::Create => cli::jd_create(port).await.map_err(Into::into),
             JobDescriptionAction::Get { id } => cli::jd_get(port, id).await.map_err(Into::into),
@@ -543,6 +547,16 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(arguments).is_ok(), "{arguments:?}");
         }
+    }
+
+    #[test]
+    fn search_takes_the_query_as_one_argument() {
+        let arguments = Cli::parse_from(["hoskinator", "search", "p99 latency"]);
+
+        let Command::Search { query } = arguments.command else {
+            panic!("expected a search");
+        };
+        assert_eq!(query, "p99 latency");
     }
 
     #[test]

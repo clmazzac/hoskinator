@@ -13,6 +13,7 @@ use hoskinator_core::repository::{
     Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, RepositoryDiff,
     RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus, ResumeRepository,
 };
+use hoskinator_core::search::SearchHit;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::core::{RpcResult, async_trait};
@@ -150,6 +151,12 @@ pub trait BulletRpc {
 }
 
 #[rpc(server, client)]
+pub trait SearchRpc {
+    #[method(name = "search.query")]
+    async fn search_query(&self, query: String) -> RpcResult<Vec<SearchHit>>;
+}
+
+#[rpc(server, client)]
 pub trait JobDescriptionRpc {
     #[method(name = "jd.create")]
     async fn jd_create(&self, job_description: NewJobDescription) -> RpcResult<JobDescription>;
@@ -227,6 +234,17 @@ pub struct BulletApi {
 }
 
 impl BulletApi {
+    pub fn new(store: Arc<Store>) -> Self {
+        Self { store }
+    }
+}
+
+/// Serves search from one store.
+pub struct SearchApi {
+    store: Arc<Store>,
+}
+
+impl SearchApi {
     pub fn new(store: Arc<Store>) -> Self {
         Self { store }
     }
@@ -480,6 +498,13 @@ impl BulletRpcServer for BulletApi {
 
     async fn variant_delete(&self, id: i64) -> RpcResult<()> {
         self.store.delete_variant(id).await.map_err(store_rpc_error)
+    }
+}
+
+#[async_trait]
+impl SearchRpcServer for SearchApi {
+    async fn search_query(&self, query: String) -> RpcResult<Vec<SearchHit>> {
+        self.store.search(&query).await.map_err(store_rpc_error)
     }
 }
 
