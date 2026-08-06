@@ -156,6 +156,16 @@ impl EntryFields {
         })
     }
 
+    /// The words the fields hold, which an entry is findable by.
+    pub fn search_text(&self) -> String {
+        let mut words = Vec::new();
+        collect_words(
+            &serde_json::to_value(self).unwrap_or(serde_json::Value::Null),
+            &mut words,
+        );
+        words.join(" ")
+    }
+
     /// The dates the fields carry, if the type has any.
     fn dates(&self) -> Dates<'_> {
         match self {
@@ -185,6 +195,29 @@ impl EntryFields {
             | EntryFields::Numbered(_)
             | EntryFields::ReversedNumbered(_) => Dates::NONE,
         }
+    }
+}
+
+/// Keys whose values are dates rather than words.
+const DATE_KEYS: [&str; 3] = ["date", "start_date", "end_date"];
+
+/// Gathers every string the value holds, at any depth, skipping dates.
+fn collect_words(value: &serde_json::Value, words: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(held) => words.push(held.clone()),
+        serde_json::Value::Array(held) => {
+            for item in held {
+                collect_words(item, words);
+            }
+        }
+        serde_json::Value::Object(held) => {
+            for (key, item) in held {
+                if !DATE_KEYS.contains(&key.as_str()) {
+                    collect_words(item, words);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -273,6 +306,7 @@ struct FieldsRow {
     date: Option<String>,
     start_date: Option<String>,
     end_date: Option<String>,
+    search_text: String,
 }
 
 impl FieldsRow {
@@ -285,6 +319,7 @@ impl FieldsRow {
             date: dates.date.map(str::to_owned),
             start_date: dates.start_date.map(str::to_owned),
             end_date: dates.end_date.map(str::to_owned),
+            search_text: fields.search_text(),
         })
     }
 }

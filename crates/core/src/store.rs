@@ -109,6 +109,9 @@ pub enum StoreError {
     #[error("could not write a variant")]
     WriteVariant(#[source] diesel::result::Error),
 
+    #[error("could not search the store")]
+    Search(#[source] diesel::result::Error),
+
     #[error("could not create a Job Description")]
     CreateJobDescription(#[source] diesel::result::Error),
 
@@ -186,6 +189,7 @@ fn establish(path: &Path) -> Result<SqliteConnection, StoreError> {
     enable_wal(&mut connection, path)?;
     enforce_foreign_keys(&mut connection, path)?;
     migrations::apply(&mut connection)?;
+    crate::search::backfill_search_text(&mut connection)?;
 
     Ok(connection)
 }
@@ -473,6 +477,38 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 1]
         );
+    }
+
+    #[tokio::test]
+    async fn opening_a_version_five_store_backfills_what_entries_are_searchable_by() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("hoskinator.db");
+        let mut connection = SqliteConnection::establish(path.to_str().unwrap()).unwrap();
+        connection
+            .batch_execute(&format!(
+                "{}\n{}\n{}\n{}\n{}\nPRAGMA user_version = 5;",
+                include_str!("../migrations/0001_profile.sql"),
+                include_str!("../migrations/0002_section.sql"),
+                include_str!("../migrations/0003_job_descriptions.sql"),
+                include_str!("../migrations/0004_entry.sql"),
+                include_str!("../migrations/0005_bullet.sql"),
+            ))
+            .unwrap();
+        connection
+            .batch_execute(
+                r#"INSERT INTO entry (entry_type, fields) VALUES ('experience',
+                   '{"company":"Acme","position":"Platform Engineer"}');
+                   INSERT INTO bullet (entry_id, position) VALUES (1, 0);
+                   INSERT INTO variant (bullet_id, text, is_default)
+                   VALUES (1, 'Cut p99 latency in half.', 1);"#,
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&path).await.unwrap();
+
+        assert_eq!(store.search("Acme").await.unwrap().len(), 1);
+        assert_eq!(store.search("latency").await.unwrap().len(), 1);
     }
 
     #[tokio::test]
