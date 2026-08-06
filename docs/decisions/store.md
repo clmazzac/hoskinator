@@ -156,3 +156,42 @@ a column is invisible to the store rather than wrong, which is why it is left.
 **One trap worth naming:** `AsChangeset` skips the primary key. `section.name` *is* the primary key,
 so `update_section` sets its columns one by one rather than from a changeset struct — otherwise a
 rename would silently do nothing.
+
+## Entries hold rendercv's fields as JSON, keyed by a type column (Slice 3, #4)
+
+An entry is one row: an `entry_type` discriminator, a `fields` JSON column holding exactly what
+rendercv reads for that type, an integer `id`, and copies of `date`, `start_date`, and `end_date`
+promoted into columns of their own. `entry_type` is indexed; the date columns are not.
+
+**Why JSON over columns:** the nine rendercv entry types share almost no fields. One table with a
+column per field would be mostly null in every row, and nine tables would need nine of everything
+above them. Nothing queries into an entry's fields — an entry is read whole, rendered whole, and
+replaced whole — so the columns would buy nothing and cost a migration every time rendercv adds a
+field.
+
+**Why the dates are promoted anyway:** ordering a section reverse-chronologically is the one read
+that must not open every row's JSON. rendercv accepts either `date` alone or `start_date` with
+`end_date`, so all three are copied out. They are copies: `fields` stays the authority, and
+`EntryRow` does not even select them.
+
+**Why one index:** listing by type is the only filter that exists. Assembly (#10) is what will order
+by date, and it can add the index it needs when it can measure it.
+
+**Fields are read against the type, never guessed.** `EntryFields` serialises untagged, so the stored
+JSON is rendercv's own shape rather than a Hoskinator wrapper. Nothing deserialises it untagged:
+`EntryFields::parse` takes the type and reads exactly that shape, and `deny_unknown_fields` rejects a
+key rendercv does not have rather than dropping it. A field rendercv gained after this was written is
+a rejected write, not a silent loss.
+
+**An entry's type does not change.** `update_entry` replaces every field and reads the new fields
+against the type the entry already has. Retyping an entry would discard the fields that made it that
+type, so it is a delete and a create.
+
+## Section eligibility stays derived (Slice 3, #4)
+
+Entries do not point at a section. `entries_for_section` reads the section's `entry_type` and lists
+the entries of that type, so retyping a section changes what it is eligible for and orphans nothing.
+
+Issue #4 asks instead that an entry "can be assigned only to sections whose `entry_type` matches",
+which reads as a stored assignment. That contradicts the Slice 2 decision above, and assembly (#10)
+is where a resume records which entries it actually placed.
