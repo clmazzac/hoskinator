@@ -195,3 +195,40 @@ the entries of that type, so retyping a section changes what it is eligible for 
 Issue #4 asks instead that an entry "can be assigned only to sections whose `entry_type` matches",
 which reads as a stored assignment. That contradicts the Slice 2 decision above, and assembly (#10)
 is where a resume records which entries it actually placed.
+
+## Bullets are rows, not strings in the Entry blob (Slice 4, #5)
+
+An accomplishment is a `bullet` row owning one or more `variant` rows. `highlights` is gone from
+`NormalFields`, `ExperienceFields`, and `EducationFields`, and migration 0005 moves what those
+columns held into bullets and variants before stripping the key out of `entry.fields`.
+
+**Why out of the blob:** a Variant is an alternative wording *of one accomplishment*, so something
+has to be that accomplishment. A string in a JSON array cannot be pointed at. Neither can a score
+(#12) or a resume recording which wording it placed (#10). Slice 3 kept bullets in the blob because
+nothing needed to address them; Slice 4 is the thing that needs to.
+
+**The Bullet holds no text.** It is identity and order: `id`, `entry_id`, `position`. Every wording
+lives in a Variant, so promoting a different wording is not a rewrite of the accomplishment.
+
+**Exactly one default, half enforced by SQLite.** `variant.is_default` carries the flag, and a
+partial unique index on `(bullet_id) WHERE is_default = 1` makes a second default per bullet
+impossible rather than merely wrong. The other half — at least one — is the store's: creating a
+Bullet requires the wording of its first Variant, and deleting the last Variant of a Bullet is
+rejected. Deleting the default promotes the lowest remaining variant id, which is arbitrary but
+deterministic, and therefore testable.
+
+**Why not `bullet.default_variant_id`:** the first Variant must exist before the Bullet can point at
+it, so the column could not be `NOT NULL`, and "no default" would be representable again.
+
+## Foreign keys are enforced (Slice 4, #5)
+
+`PRAGMA foreign_keys = ON` runs at connection setup beside WAL, and child rows declare
+`REFERENCES ... ON DELETE CASCADE`. Deleting an Entry removes its Bullets, and deleting a Bullet
+removes its Variants, in one statement.
+
+**Why the pragma is needed at all:** SQLite parses `REFERENCES` and then ignores it unless foreign
+keys are switched on, per connection, every time. A declared constraint nothing enforces is worse
+than none, because it reads as a guarantee.
+
+**The cost:** enforcement is store-wide and applies to every table added later. A migration that
+rewrites a parent table now has to think about its children.
