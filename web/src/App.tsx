@@ -10,24 +10,33 @@ import {
 import {
   ENTRY_TYPES,
   callRepository,
+  createBullet,
   createEntry,
   createJobDescription,
+  createVariant,
   createSection,
+  deleteBullet,
   deleteEntry,
   deleteJobDescription,
   deleteSection,
+  deleteVariant,
   eligibleEntries,
   getEntry,
   getJobDescription,
   getProfile,
+  listBullets,
   listEntries,
   listJobDescriptions,
   listSections,
+  moveBullet,
   renameSection,
   retypeSection,
   RpcFailure,
+  setDefaultVariant,
   setProfile,
   updateEntry,
+  updateVariant,
+  type Bullet,
   type Entry,
   type JobDescription,
   type Section,
@@ -164,6 +173,10 @@ export default function App() {
       <hr />
 
       <Entries />
+
+      <hr />
+
+      <Bullets />
 
       <hr />
 
@@ -574,6 +587,145 @@ function Entries() {
       <pre aria-label="Selected entry">
         {selected ? JSON.stringify(selected, null, 2) : "No entry selected."}
       </pre>
+    </section>
+  );
+}
+
+/**
+ * Exercises the nine bullet and variant methods against one entry at a time.
+ */
+function Bullets() {
+  const [entryId, setEntryId] = useState("");
+  const [bullets, setBullets] = useState<Bullet[]>([]);
+  const [status, setStatus] = useState("Give an entry id.");
+
+  const [text, setText] = useState("");
+  const [note, setNote] = useState("");
+
+  function describe(error: unknown) {
+    return error instanceof RpcFailure
+      ? `Failed (${error.code}): ${error.message}`
+      : `Failed: ${(error as Error).message}`;
+  }
+
+  async function load() {
+    try {
+      setBullets(await listBullets(Number(entryId)));
+      setStatus("Loaded.");
+    } catch (error) {
+      setStatus(describe(error));
+    }
+  }
+
+  /** Runs one call, then reloads the entry's bullets. */
+  async function run(call: () => Promise<unknown>, done: string) {
+    try {
+      await call();
+      setStatus(done);
+      setBullets(await listBullets(Number(entryId)));
+    } catch (error) {
+      setStatus(describe(error));
+    }
+  }
+
+  return (
+    <section>
+      <h2>Bullets</h2>
+      <p>
+        <label>
+          Entry id
+          <input
+            value={entryId}
+            aria-label="Entry id to list bullets for"
+            onChange={(event) => setEntryId(event.target.value)}
+          />
+        </label>{" "}
+        <button onClick={load}>List</button> <span>{status}</span>
+      </p>
+
+      <p>
+        <label>
+          Wording
+          <input
+            size={60}
+            value={text}
+            aria-label="Wording"
+            onChange={(event) => setText(event.target.value)}
+          />
+        </label>
+      </p>
+      <p>
+        <label>
+          Note
+          <input
+            size={40}
+            value={note}
+            aria-label="Note"
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </label>{" "}
+        <button
+          onClick={() =>
+            run(() => createBullet(Number(entryId), text, note || null), "Created bullet.")
+          }
+        >
+          Add bullet
+        </button>
+      </p>
+
+      {bullets.map((bullet) => (
+        <div key={bullet.id}>
+          <h3>
+            {bullet.position}. bullet {bullet.id}
+          </h3>
+          <p>
+            <button onClick={() => run(() => moveBullet(bullet.id, bullet.position - 1), "Moved.")}>
+              Up
+            </button>{" "}
+            <button onClick={() => run(() => moveBullet(bullet.id, bullet.position + 1), "Moved.")}>
+              Down
+            </button>{" "}
+            <button onClick={() => run(() => deleteBullet(bullet.id), "Deleted bullet.")}>
+              Delete bullet
+            </button>{" "}
+            <button
+              onClick={() =>
+                run(() => createVariant(bullet.id, text, note || null), "Added variant.")
+              }
+            >
+              Add the wording above as a variant
+            </button>
+          </p>
+          <ul>
+            {bullet.variants.map((variant) => (
+              <li key={variant.id}>
+                {variant.is_default ? "default: " : ""}
+                {variant.text}
+                {variant.note ? ` (${variant.note})` : ""}{" "}
+                <button
+                  onClick={() => run(() => setDefaultVariant(variant.id), "Default moved.")}
+                  disabled={variant.is_default}
+                >
+                  Make default
+                </button>{" "}
+                <button
+                  onClick={() =>
+                    run(() => updateVariant(variant.id, text || null, note || null), "Updated.")
+                  }
+                >
+                  Reword to the above
+                </button>{" "}
+                <button onClick={() => run(() => deleteVariant(variant.id), "Deleted variant.")}>
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      <p>Bullets, as JSON-RPC returns them.</p>
+      <pre aria-label="Bullets as JSON">{JSON.stringify(bullets, null, 2)}</pre>
     </section>
   );
 }

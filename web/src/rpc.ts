@@ -114,6 +114,67 @@ export function deleteEntry(id: number): Promise<null> {
   return call<null>("entry.delete", [id]);
 }
 
+/** One wording of an accomplishment. */
+export interface Variant {
+  id: number;
+  bullet_id: number;
+  text: string;
+  note: string | null;
+  is_default: boolean;
+}
+
+/** One accomplishment inside an entry, with every wording it has. */
+export interface Bullet {
+  id: number;
+  entry_id: number;
+  position: number;
+  variants: Variant[];
+}
+
+export function createBullet(
+  entryId: number,
+  text: string,
+  note: string | null,
+): Promise<Bullet> {
+  return call<Bullet>("bullet.create", [entryId, text, note]);
+}
+
+export function listBullets(entryId: number): Promise<Bullet[]> {
+  return call<Bullet[]>("bullet.list", [entryId]);
+}
+
+export function moveBullet(id: number, position: number): Promise<Bullet[]> {
+  return call<Bullet[]>("bullet.move", [id, position]);
+}
+
+export function deleteBullet(id: number): Promise<null> {
+  return call<null>("bullet.delete", [id]);
+}
+
+export function createVariant(
+  bulletId: number,
+  text: string,
+  note: string | null,
+): Promise<Variant> {
+  return call<Variant>("variant.create", [bulletId, text, note]);
+}
+
+export function updateVariant(
+  id: number,
+  text: string | null,
+  note: string | null,
+): Promise<Variant> {
+  return call<Variant>("variant.update", [id, text, note]);
+}
+
+export function setDefaultVariant(id: number): Promise<Variant> {
+  return call<Variant>("variant.set_default", [id]);
+}
+
+export function deleteVariant(id: number): Promise<null> {
+  return call<null>("variant.delete", [id]);
+}
+
 export function createJobDescription(
   jobDescription: NewJobDescription,
 ): Promise<JobDescription> {
