@@ -74,6 +74,22 @@ pub enum StoreError {
     #[error("could not write a section")]
     WriteSection(#[source] diesel::result::Error),
 
+    #[error("could not read an entry")]
+    ReadEntry(#[source] diesel::result::Error),
+
+    #[error("could not write an entry")]
+    WriteEntry(#[source] diesel::result::Error),
+
+    #[error("the stored entry {id} does not hold the fields its type calls for")]
+    DecodeEntry {
+        id: i64,
+        #[source]
+        source: crate::entry::EntryError,
+    },
+
+    #[error("could not encode an entry's fields")]
+    EncodeEntry(#[source] serde_json::Error),
+
     #[error("could not create a Job Description")]
     CreateJobDescription(#[source] diesel::result::Error),
 
@@ -85,6 +101,9 @@ pub enum StoreError {
 
     #[error(transparent)]
     Section(#[from] crate::section::SectionError),
+
+    #[error(transparent)]
+    Entry(#[from] crate::entry::EntryError),
 }
 
 /// The Master Store: every fact and accomplishment statement the user has accumulated.
@@ -269,6 +288,10 @@ mod tests {
                     .select(schema::job_description::all_columns)
                     .execute(connection)
                     .expect("selecting every job_description column");
+                schema::entry::table
+                    .select(schema::entry::all_columns)
+                    .execute(connection)
+                    .expect("selecting every entry column");
             })
             .await;
     }
@@ -285,6 +308,20 @@ mod tests {
         .await;
 
         assert_eq!(found, 2);
+    }
+
+    #[tokio::test]
+    async fn entries_are_indexed_by_type_after_migrating() {
+        let (_dir, store) = open_temp_store().await;
+
+        let found = objects_named(
+            &store,
+            "SELECT count(*) AS found FROM sqlite_master \
+             WHERE type = 'index' AND name = 'entry_by_type'",
+        )
+        .await;
+
+        assert_eq!(found, 1);
     }
 
     #[tokio::test]

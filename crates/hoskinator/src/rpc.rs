@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use hoskinator_core::entry::EntryError;
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::profile::Profile;
 use hoskinator_core::repository::{
@@ -39,6 +40,10 @@ pub const REPOSITORY_OPERATION: i32 = -32009;
 pub const SECTION_INVALID: i32 = -32010;
 /// The request named a section that is not there.
 pub const SECTION_NOT_FOUND: i32 = -32011;
+/// The request described an entry that cannot exist.
+pub const ENTRY_INVALID: i32 = -32012;
+/// The request named an entry that is not there.
+pub const ENTRY_NOT_FOUND: i32 = -32013;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -306,7 +311,7 @@ fn store_code_for(error: &StoreError) -> i32 {
         | StoreError::Wal { .. }
         | StoreError::Migrate { .. }
         | StoreError::SchemaVersion(_) => STORE_UNAVAILABLE,
-        StoreError::DecodeProfile { .. } => STORE_CORRUPT,
+        StoreError::DecodeProfile { .. } | StoreError::DecodeEntry { .. } => STORE_CORRUPT,
         StoreError::CreateJobDescription(_)
         | StoreError::ReadJobDescriptions(_)
         | StoreError::DeleteJobDescription(_)
@@ -314,12 +319,19 @@ fn store_code_for(error: &StoreError) -> i32 {
         | StoreError::WriteProfile(_)
         | StoreError::EncodeProfile { .. }
         | StoreError::ReadSection(_)
-        | StoreError::WriteSection(_) => STORE_IO,
+        | StoreError::WriteSection(_)
+        | StoreError::ReadEntry(_)
+        | StoreError::WriteEntry(_)
+        | StoreError::EncodeEntry(_) => STORE_IO,
         StoreError::Section(error) => match error {
             SectionError::BlankName
             | SectionError::DuplicateName { .. }
             | SectionError::UnknownEntryType(_) => SECTION_INVALID,
             SectionError::NoSuchSection { .. } => SECTION_NOT_FOUND,
+        },
+        StoreError::Entry(error) => match error {
+            EntryError::Fields { .. } => ENTRY_INVALID,
+            EntryError::NoSuchEntry { .. } => ENTRY_NOT_FOUND,
         },
     }
 }
@@ -438,6 +450,8 @@ mod tests {
             REPOSITORY_OPERATION,
             SECTION_INVALID,
             SECTION_NOT_FOUND,
+            ENTRY_INVALID,
+            ENTRY_NOT_FOUND,
         ];
         assert!(codes.iter().all(|code| (-32099..=-32000).contains(code)));
         let unique: std::collections::HashSet<_> = codes.iter().collect();
