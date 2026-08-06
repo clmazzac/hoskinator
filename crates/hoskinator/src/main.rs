@@ -37,6 +37,12 @@ enum Command {
         action: SectionAction,
     },
 
+    /// Creates, lists, and edits Entries.
+    Entry {
+        #[command(subcommand)]
+        action: EntryAction,
+    },
+
     /// Creates and manages standalone Job Descriptions.
     #[command(name = "jd")]
     JobDescription {
@@ -78,6 +84,34 @@ enum SectionAction {
 
     /// Deletes a section.
     Delete { name: String },
+}
+
+#[derive(Subcommand)]
+enum EntryAction {
+    /// Creates an entry from the fields in JSON on standard input.
+    Create {
+        /// Entry shape the fields are read as.
+        #[arg(long = "type", value_name = "ENTRY_TYPE", value_parser = entry_type_parser())]
+        entry_type: EntryType,
+    },
+
+    /// Prints one entry as JSON.
+    Get { id: i64 },
+
+    /// Prints entries, optionally of one type only.
+    List {
+        #[arg(long = "type", value_name = "ENTRY_TYPE", value_parser = entry_type_parser())]
+        entry_type: Option<EntryType>,
+    },
+
+    /// Prints the entries a section is eligible to hold.
+    Eligible { section: String },
+
+    /// Replaces an entry's fields with the JSON on standard input.
+    Update { id: i64 },
+
+    /// Deletes one entry.
+    Delete { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -142,6 +176,20 @@ async fn main() -> ExitCode {
             SectionAction::Delete { name } => {
                 cli::section_delete(port, &name).await.map_err(Into::into)
             }
+        },
+        Command::Entry { action } => match action {
+            EntryAction::Create { entry_type } => cli::entry_create(port, entry_type)
+                .await
+                .map_err(Into::into),
+            EntryAction::Get { id } => cli::entry_get(port, id).await.map_err(Into::into),
+            EntryAction::List { entry_type } => {
+                cli::entry_list(port, entry_type).await.map_err(Into::into)
+            }
+            EntryAction::Eligible { section } => cli::entry_eligible(port, &section)
+                .await
+                .map_err(Into::into),
+            EntryAction::Update { id } => cli::entry_update(port, id).await.map_err(Into::into),
+            EntryAction::Delete { id } => cli::entry_delete(port, id).await.map_err(Into::into),
         },
         Command::JobDescription { action } => match action {
             JobDescriptionAction::Create => cli::jd_create(port).await.map_err(Into::into),
@@ -301,6 +349,44 @@ mod tests {
                 action: ProfileAction::Set
             }
         ));
+    }
+
+    #[test]
+    fn an_entry_is_created_with_its_type_behind_a_flag() {
+        let arguments = Cli::parse_from(["hoskinator", "entry", "create", "--type", "experience"]);
+
+        let Command::Entry {
+            action: EntryAction::Create { entry_type },
+        } = arguments.command
+        else {
+            panic!("expected an entry create");
+        };
+        assert_eq!(entry_type, EntryType::Experience);
+    }
+
+    #[test]
+    fn listing_entries_without_a_type_is_every_type() {
+        let arguments = Cli::parse_from(["hoskinator", "entry", "list"]);
+
+        assert!(matches!(
+            arguments.command,
+            Command::Entry {
+                action: EntryAction::List { entry_type: None }
+            }
+        ));
+    }
+
+    #[test]
+    fn entry_actions_have_their_own_subcommands() {
+        for arguments in [
+            ["hoskinator", "entry", "get", "17"].as_slice(),
+            ["hoskinator", "entry", "list", "--type", "bullet"].as_slice(),
+            ["hoskinator", "entry", "eligible", "Experience"].as_slice(),
+            ["hoskinator", "entry", "update", "17"].as_slice(),
+            ["hoskinator", "entry", "delete", "17"].as_slice(),
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_ok(), "{arguments:?}");
+        }
     }
 
     #[test]
