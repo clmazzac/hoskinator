@@ -232,3 +232,55 @@ than none, because it reads as a guarantee.
 
 **The cost:** enforcement is store-wide and applies to every table added later. A migration that
 rewrites a parent table now has to think about its children.
+
+## Search is one FTS5 index over Entries and Variants (Slice 5, #6)
+
+`search_fts` is a single FTS5 table with `kind`, `ref`, and `body`, kept current by triggers on
+`entry` and `variant`. One `MATCH` answers with one ranked list.
+
+**Why one table:** FTS5's `rank` is a score within an index. Two indexes give two scales, so ranking
+an Entry hit against a Variant hit would mean inventing a comparison. One index is the only shape
+where the ordering means anything.
+
+**Every Variant is indexed, not just the default.** Finding that a wording you are not currently
+using matches the posting is the point of keeping several.
+
+**Job Descriptions stay out.** `job_description_fts` is untouched and `jd.list(query)` still searches
+postings. A posting says what an employer asked for; the Master Store says what the user did. One
+ranked list mixing them would make each hit ambiguous about whose claim it is.
+
+## An Entry's searchable text is computed in Rust (Slice 5, #6)
+
+`entry.search_text` holds the words an Entry is findable by, written by the store on every create and
+update. The trigger indexes that column and knows nothing about rendercv.
+
+**Why not index `fields` directly:** the blob contains its own keys, so searching `summary` or
+`date` would match nearly every Entry.
+
+**Why not `json_extract` in the trigger:** it would put rendercv's field taxonomy in SQL, beside the
+copy the Rust structs already hold, and every rendercv field would need a migration to become
+searchable.
+
+**What goes in:** every string the fields hold, at any depth, except `date`, `start_date`, and
+`end_date`. Walking the serialised fields rather than matching on each type means a field added to
+`EntryFields` is searchable without touching this code. Dates are excluded because they are
+structured, already promoted to their own columns, and would make `2021` match every entry of that
+year.
+
+**Backfill:** opening the store recomputes `search_text` for any Entry whose column is empty, which
+is what migration 0006 leaves behind for rows that already existed. SQL cannot compute it, so the
+migration cannot.
+
+## A search hit is a Bullet, not a Variant (Slice 5, #6)
+
+Variant matches roll up to the Bullet that owns them, keeping the best-ranked one and naming which
+wording matched. Entry matches are their own kind of hit.
+
+**Why:** one role can hold several Bullets, each with several Variants written for different
+applications, and a term common to that role matches most of them. Flat Variant hits would answer a
+question about one accomplishment with a page of rewordings of it. During assembly the decision is
+which accomplishment to place; which wording to use is the next decision, not the same one.
+
+**Each hit carries its Entry** so a caller can group by role without another read. It carries the
+Entry's type and fields rather than a formatted label: how a hit reads to a user is a design
+decision.
