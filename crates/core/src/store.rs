@@ -38,6 +38,13 @@ pub enum StoreError {
         source: diesel::result::Error,
     },
 
+    #[error("could not enforce foreign keys on the store at {path}")]
+    ForeignKeys {
+        path: PathBuf,
+        #[source]
+        source: diesel::result::Error,
+    },
+
     #[error("could not apply migration {version}")]
     Migrate {
         version: i64,
@@ -162,6 +169,7 @@ fn establish(path: &Path) -> Result<SqliteConnection, StoreError> {
     // Before any migration: a writer holding the database in rollback-journal mode would
     // block readers for the length of the migration.
     enable_wal(&mut connection, path)?;
+    enforce_foreign_keys(&mut connection, path)?;
     migrations::apply(&mut connection)?;
 
     Ok(connection)
@@ -172,6 +180,16 @@ fn enable_wal(connection: &mut SqliteConnection, path: &Path) -> Result<(), Stor
     connection
         .batch_execute("PRAGMA journal_mode = WAL")
         .map_err(|source| StoreError::Wal {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+/// Switches on foreign key enforcement, which SQLite leaves off per connection.
+fn enforce_foreign_keys(connection: &mut SqliteConnection, path: &Path) -> Result<(), StoreError> {
+    connection
+        .batch_execute("PRAGMA foreign_keys = ON")
+        .map_err(|source| StoreError::ForeignKeys {
             path: path.to_path_buf(),
             source,
         })
@@ -261,6 +279,28 @@ mod tests {
         let (_dir, store) = open_temp_store().await;
 
         assert_eq!(journal_mode(&store).await, "wal");
+    }
+
+    #[derive(QueryableByName)]
+    struct ForeignKeys {
+        #[diesel(sql_type = BigInt)]
+        foreign_keys: i64,
+    }
+
+    #[tokio::test]
+    async fn opening_leaves_foreign_keys_enforced() {
+        let (_dir, store) = open_temp_store().await;
+
+        let enforced = store
+            .with_connection(|connection| {
+                diesel::sql_query("PRAGMA foreign_keys")
+                    .get_result::<ForeignKeys>(connection)
+                    .unwrap()
+                    .foreign_keys
+            })
+            .await;
+
+        assert_eq!(enforced, 1);
     }
 
     #[tokio::test]
