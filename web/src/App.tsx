@@ -3,18 +3,25 @@ import { useEffect, useState } from "react";
 import {
   ENTRY_TYPES,
   callRepository,
+  createEntry,
   createJobDescription,
   createSection,
+  deleteEntry,
   deleteJobDescription,
   deleteSection,
+  eligibleEntries,
+  getEntry,
   getJobDescription,
   getProfile,
+  listEntries,
   listJobDescriptions,
   listSections,
   renameSection,
   retypeSection,
   RpcFailure,
   setProfile,
+  updateEntry,
+  type Entry,
   type JobDescription,
   type Section,
 } from "./rpc";
@@ -146,6 +153,10 @@ export default function App() {
       <hr />
 
       <Sections />
+
+      <hr />
+
+      <Entries />
 
       <hr />
 
@@ -336,6 +347,150 @@ function Sections() {
       <p>
         <button onClick={load}>Reload</button> <span>{status}</span>
       </p>
+    </section>
+  );
+}
+
+/**
+ * Exercises the six entry methods. Fields go in as raw JSON, one button per JSON-RPC call.
+ */
+function Entries() {
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [status, setStatus] = useState("Loading…");
+  const [selected, setSelected] = useState<Entry | null>(null);
+
+  const [entryType, setEntryType] = useState<string>(ENTRY_TYPES[0]);
+  const [fields, setFields] = useState('{\n  "bullet": "Shipped it."\n}');
+  const [id, setId] = useState("");
+  const [section, setSection] = useState("");
+  const [listType, setListType] = useState<string>("");
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function load() {
+    try {
+      setEntries(await listEntries(listType || null));
+      setStatus("Loaded.");
+    } catch (error) {
+      setStatus(describe(error));
+    }
+  }
+
+  /** Runs one call, keeps what it answered, then reloads the list. */
+  async function run(call: () => Promise<Entry | null>, done: string) {
+    try {
+      setSelected(await call());
+      setStatus(done);
+      setEntries(await listEntries(listType || null));
+    } catch (error) {
+      setStatus(describe(error));
+    }
+  }
+
+  function describe(error: unknown) {
+    return error instanceof RpcFailure
+      ? `Failed (${error.code}): ${error.message}`
+      : `Failed: ${(error as Error).message}`;
+  }
+
+  return (
+    <section>
+      <h2>Entries</h2>
+      <p>Entries, as JSON-RPC returns them.</p>
+      <pre aria-label="Entries as JSON">{JSON.stringify(entries, null, 2)}</pre>
+      <p>
+        <label>
+          Fields as JSON
+          <br />
+          <textarea
+            rows={10}
+            cols={72}
+            value={fields}
+            spellCheck={false}
+            aria-label="Entry fields as JSON"
+            onChange={(event) => setFields(event.target.value)}
+          />
+        </label>
+      </p>
+      <p>
+        <select
+          value={entryType}
+          aria-label="Entry type to create with"
+          onChange={(event) => setEntryType(event.target.value)}
+        >
+          {ENTRY_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </select>{" "}
+        <button onClick={() => run(() => createEntry(entryType, JSON.parse(fields)), "Created.")}>
+          Create
+        </button>
+      </p>
+      <p>
+        <input
+          value={id}
+          aria-label="Entry id"
+          onChange={(event) => setId(event.target.value)}
+        />{" "}
+        <button onClick={() => run(() => getEntry(Number(id)), "Loaded entry.")}>Get</button>{" "}
+        <button onClick={() => run(() => updateEntry(Number(id), JSON.parse(fields)), "Updated.")}>
+          Update
+        </button>{" "}
+        <button
+          onClick={() =>
+            run(async () => {
+              await deleteEntry(Number(id));
+              return null;
+            }, "Deleted.")
+          }
+        >
+          Delete
+        </button>
+      </p>
+      <p>
+        <select
+          value={listType}
+          aria-label="Entry type to list"
+          onChange={(event) => setListType(event.target.value)}
+        >
+          <option value="">every type</option>
+          {ENTRY_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </select>{" "}
+        <button onClick={load}>List</button>
+      </p>
+      <p>
+        <input
+          value={section}
+          aria-label="Section to list eligible entries for"
+          onChange={(event) => setSection(event.target.value)}
+        />{" "}
+        <button
+          onClick={async () => {
+            try {
+              setEntries(await eligibleEntries(section));
+              setStatus("Listed what the section is eligible for.");
+            } catch (error) {
+              setStatus(describe(error));
+            }
+          }}
+        >
+          Eligible
+        </button>{" "}
+        <span>{status}</span>
+      </p>
+
+      <h3>Selected entry</h3>
+      <pre aria-label="Selected entry">
+        {selected ? JSON.stringify(selected, null, 2) : "No entry selected."}
+      </pre>
     </section>
   );
 }

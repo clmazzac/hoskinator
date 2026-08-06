@@ -82,6 +82,38 @@ export function deleteSection(name: string): Promise<null> {
   return call<null>("section.delete", [name]);
 }
 
+/** An entry as the store holds it. `fields` is whatever rendercv reads for `entry_type`. */
+export interface Entry {
+  id: number;
+  entry_type: string;
+  fields: unknown;
+  created_at: string;
+}
+
+export function createEntry(entryType: string, fields: unknown): Promise<Entry> {
+  return call<Entry>("entry.create", [entryType, fields]);
+}
+
+export function getEntry(id: number): Promise<Entry | null> {
+  return call<Entry | null>("entry.get", [id]);
+}
+
+export function listEntries(entryType: string | null = null): Promise<Entry[]> {
+  return call<Entry[]>("entry.list", [entryType]);
+}
+
+export function eligibleEntries(section: string): Promise<Entry[]> {
+  return call<Entry[]>("entry.eligible", [section]);
+}
+
+export function updateEntry(id: number, fields: unknown): Promise<Entry> {
+  return call<Entry>("entry.update", [id, fields]);
+}
+
+export function deleteEntry(id: number): Promise<null> {
+  return call<null>("entry.delete", [id]);
+}
+
 export function createJobDescription(
   jobDescription: NewJobDescription,
 ): Promise<JobDescription> {
