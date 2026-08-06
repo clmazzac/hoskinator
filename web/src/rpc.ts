@@ -175,6 +175,22 @@ export function deleteVariant(id: number): Promise<null> {
   return call<null>("variant.delete", [id]);
 }
 
+/** One thing a query matched. `entry` is the whole record, not a label. */
+export type SearchHit =
+  | { kind: "entry"; entry: unknown; rank: number }
+  | {
+      kind: "bullet";
+      entry: unknown;
+      bullet_id: number;
+      matched_variant: Variant;
+      other_variants: number;
+      rank: number;
+    };
+
+export function search(query: string): Promise<SearchHit[]> {
+  return call<SearchHit[]>("search.query", [query]);
+}
+
 export function createJobDescription(
   jobDescription: NewJobDescription,
 ): Promise<JobDescription> {

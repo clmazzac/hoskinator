@@ -32,12 +32,14 @@ import {
   renameSection,
   retypeSection,
   RpcFailure,
+  search,
   setDefaultVariant,
   setProfile,
   updateEntry,
   updateVariant,
   type Bullet,
   type Entry,
+  type SearchHit,
   type JobDescription,
   type Section,
 } from "./rpc";
@@ -177,6 +179,10 @@ export default function App() {
       <hr />
 
       <Bullets />
+
+      <hr />
+
+      <Search />
 
       <hr />
 
@@ -726,6 +732,54 @@ function Bullets() {
 
       <p>Bullets, as JSON-RPC returns them.</p>
       <pre aria-label="Bullets as JSON">{JSON.stringify(bullets, null, 2)}</pre>
+    </section>
+  );
+}
+
+/**
+ * Exercises search.query. Hits print as JSON, with the wording that matched shown above it.
+ */
+function Search() {
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [status, setStatus] = useState("Type a query.");
+
+  async function run() {
+    try {
+      setHits(await search(query));
+      setStatus("Searched.");
+    } catch (error) {
+      const detail = error instanceof RpcFailure
+        ? `Failed (${error.code}): ${error.message}`
+        : `Failed: ${(error as Error).message}`;
+      setStatus(detail);
+    }
+  }
+
+  return (
+    <section>
+      <h2>Search</h2>
+      <p>
+        <input
+          size={60}
+          value={query}
+          aria-label="Search query"
+          onChange={(event) => setQuery(event.target.value)}
+        />{" "}
+        <button onClick={run}>Search</button> <span>{status}</span>
+      </p>
+      <ul>
+        {hits.map((hit, at) => (
+          <li key={at}>
+            {hit.kind === "bullet"
+              ? `bullet ${hit.bullet_id}: ${hit.matched_variant.text}` +
+                (hit.matched_variant.is_default ? " (default)" : " (not the default)") +
+                (hit.other_variants ? ` +${hit.other_variants} other wordings` : "")
+              : "entry"}
+          </li>
+        ))}
+      </ul>
+      <pre aria-label="Search hits as JSON">{JSON.stringify(hits, null, 2)}</pre>
     </section>
   );
 }
