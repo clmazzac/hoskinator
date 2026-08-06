@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 
 import {
+  ENTRY_FIELDS,
+  TEXT_FIELD,
+  buildFields,
+  isListField,
+  readFields,
+} from "./entryFields";
+import {
   ENTRY_TYPES,
   callRepository,
   createEntry,
@@ -351,8 +358,10 @@ function Sections() {
   );
 }
 
+
 /**
- * Exercises the six entry methods. Fields go in as raw JSON, one button per JSON-RPC call.
+ * Exercises the six entry methods. One input per field the chosen type holds, generated from
+ * ENTRY_FIELDS, and one button per JSON-RPC call.
  */
 function Entries() {
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -360,14 +369,22 @@ function Entries() {
   const [selected, setSelected] = useState<Entry | null>(null);
 
   const [entryType, setEntryType] = useState<string>(ENTRY_TYPES[0]);
-  const [fields, setFields] = useState('{\n  "bullet": "Shipped it."\n}');
+  const [values, setValues] = useState<Record<string, string>>({});
   const [id, setId] = useState("");
   const [section, setSection] = useState("");
   const [listType, setListType] = useState<string>("");
 
+  const fields = buildFields(entryType, values);
+
   useEffect(() => {
     void load();
   }, []);
+
+  function describe(error: unknown) {
+    return error instanceof RpcFailure
+      ? `Failed (${error.code}): ${error.message}`
+      : `Failed: ${(error as Error).message}`;
+  }
 
   async function load() {
     try {
@@ -389,10 +406,31 @@ function Entries() {
     }
   }
 
-  function describe(error: unknown) {
-    return error instanceof RpcFailure
-      ? `Failed (${error.code}): ${error.message}`
-      : `Failed: ${(error as Error).message}`;
+  /** Loads one entry into the form. */
+  async function edit() {
+    try {
+      const entry = await getEntry(Number(id));
+      setSelected(entry);
+      if (entry) {
+        setEntryType(entry.entry_type);
+        setValues(readFields(entry.entry_type, entry.fields));
+        setStatus("Loaded entry into the form.");
+      } else {
+        setStatus("No entry with that id.");
+      }
+    } catch (error) {
+      setStatus(describe(error));
+    }
+  }
+
+  function write(name: string, written: string) {
+    setValues({ ...values, [name]: written });
+  }
+
+  /** Switching type clears the form. */
+  function retype(chosen: string) {
+    setEntryType(chosen);
+    setValues({});
   }
 
   return (
@@ -400,44 +438,84 @@ function Entries() {
       <h2>Entries</h2>
       <p>Entries, as JSON-RPC returns them.</p>
       <pre aria-label="Entries as JSON">{JSON.stringify(entries, null, 2)}</pre>
+
       <p>
         <label>
-          Fields as JSON
-          <br />
-          <textarea
-            rows={10}
-            cols={72}
-            value={fields}
-            spellCheck={false}
-            aria-label="Entry fields as JSON"
-            onChange={(event) => setFields(event.target.value)}
-          />
+          Entry type
+          <select
+            value={entryType}
+            aria-label="Entry type"
+            onChange={(event) => retype(event.target.value)}
+          >
+            {ENTRY_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
         </label>
       </p>
+
+      {entryType === "text" ? (
+        <p>
+          <label>
+            {TEXT_FIELD}
+            <br />
+            <textarea
+              rows={4}
+              cols={72}
+              value={values[TEXT_FIELD] ?? ""}
+              spellCheck={false}
+              aria-label={TEXT_FIELD}
+              onChange={(event) => write(TEXT_FIELD, event.target.value)}
+            />
+          </label>
+        </p>
+      ) : (
+        ENTRY_FIELDS[entryType].map((name) => (
+          <p key={name}>
+            <label>
+              {name}
+              {isListField(name) ? " (one per line)" : ""}
+              <br />
+              {isListField(name) ? (
+                <textarea
+                  rows={4}
+                  cols={72}
+                  value={values[name] ?? ""}
+                  spellCheck={false}
+                  aria-label={name}
+                  onChange={(event) => write(name, event.target.value)}
+                />
+              ) : (
+                <input
+                  size={60}
+                  value={values[name] ?? ""}
+                  aria-label={name}
+                  onChange={(event) => write(name, event.target.value)}
+                />
+              )}
+            </label>
+          </p>
+        ))
+      )}
+
+      <p>Fields, as they will go over the wire.</p>
+      <pre aria-label="Fields as JSON">{JSON.stringify(fields, null, 2)}</pre>
+
       <p>
-        <select
-          value={entryType}
-          aria-label="Entry type to create with"
-          onChange={(event) => setEntryType(event.target.value)}
-        >
-          {ENTRY_TYPES.map((type) => (
-            <option key={type} value={type}>
-              {type}
-            </option>
-          ))}
-        </select>{" "}
-        <button onClick={() => run(() => createEntry(entryType, JSON.parse(fields)), "Created.")}>
+        <button onClick={() => run(() => createEntry(entryType, fields), "Created.")}>
           Create
         </button>
       </p>
+
       <p>
-        <input
-          value={id}
-          aria-label="Entry id"
-          onChange={(event) => setId(event.target.value)}
-        />{" "}
-        <button onClick={() => run(() => getEntry(Number(id)), "Loaded entry.")}>Get</button>{" "}
-        <button onClick={() => run(() => updateEntry(Number(id), JSON.parse(fields)), "Updated.")}>
+        <label>
+          Entry id
+          <input value={id} aria-label="Entry id" onChange={(event) => setId(event.target.value)} />
+        </label>{" "}
+        <button onClick={edit}>Get</button>{" "}
+        <button onClick={() => run(() => updateEntry(Number(id), fields), "Updated.")}>
           Update
         </button>{" "}
         <button
@@ -451,6 +529,7 @@ function Entries() {
           Delete
         </button>
       </p>
+
       <p>
         <select
           value={listType}
@@ -466,12 +545,16 @@ function Entries() {
         </select>{" "}
         <button onClick={load}>List</button>
       </p>
+
       <p>
-        <input
-          value={section}
-          aria-label="Section to list eligible entries for"
-          onChange={(event) => setSection(event.target.value)}
-        />{" "}
+        <label>
+          Section
+          <input
+            value={section}
+            aria-label="Section to list eligible entries for"
+            onChange={(event) => setSection(event.target.value)}
+          />
+        </label>{" "}
         <button
           onClick={async () => {
             try {
