@@ -17,9 +17,9 @@ use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
 use crate::rpc::{
-    EntryApi, EntryRpcServer, JobDescriptionApi, JobDescriptionRpcServer, ProfileApi,
-    ProfileRpcServer, RepositoryApi, RepositoryRpcServer, ResumeRepositoryProvider, SectionApi,
-    SectionRpcServer,
+    BulletApi, BulletRpcServer, EntryApi, EntryRpcServer, JobDescriptionApi,
+    JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RepositoryApi, RepositoryRpcServer,
+    ResumeRepositoryProvider, SectionApi, SectionRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
@@ -71,6 +71,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(ProfileApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SectionApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(store).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
@@ -497,6 +498,172 @@ mod tests {
         .await;
 
         assert_eq!(answer["error"]["code"], crate::rpc::ENTRY_NOT_FOUND);
+    }
+
+    /// Creates an entry of a type that carries bullets and answers with its id.
+    async fn entry_with_bullets(router: &Router) -> i64 {
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.create","params":["experience",
+               {"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+
+        created["result"]["id"].as_i64().unwrap()
+    }
+
+    #[tokio::test]
+    async fn bullet_and_variant_crud_works_over_http() {
+        let (_dir, router) = test_router().await;
+        let entry_id = entry_with_bullets(&router).await;
+
+        let bullet = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"bullet.create","params":[{entry_id},
+                   "Cut latency in half.","from the H1 review"]}}"#
+            ),
+        )
+        .await;
+        let bullet_id = bullet["result"]["id"].as_i64().unwrap();
+        assert_eq!(bullet["result"]["variants"].as_array().unwrap().len(), 1);
+        assert_eq!(bullet["result"]["variants"][0]["is_default"], true);
+        assert_eq!(
+            bullet["result"]["variants"][0]["note"],
+            "from the H1 review"
+        );
+
+        let added = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":3,"method":"variant.create","params":[{bullet_id},
+                   "Halved p99 latency.",null]}}"#
+            ),
+        )
+        .await;
+        let variant_id = added["result"]["id"].as_i64().unwrap();
+        assert_eq!(added["result"]["is_default"], false);
+
+        let promoted = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":4,"method":"variant.set_default","params":[{variant_id}]}}"#
+            ),
+        )
+        .await;
+        assert_eq!(promoted["result"]["is_default"], true);
+
+        let listed = call(
+            router.clone(),
+            &format!(r#"{{"jsonrpc":"2.0","id":5,"method":"bullet.list","params":[{entry_id}]}}"#),
+        )
+        .await;
+        let variants = listed["result"][0]["variants"].as_array().unwrap();
+        assert_eq!(variants.len(), 2);
+        assert_eq!(
+            variants.iter().filter(|v| v["is_default"] == true).count(),
+            1
+        );
+        assert_eq!(variants[0]["id"], variant_id);
+
+        let reworded = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":6,"method":"variant.update","params":[{variant_id},
+                   "Halved tail latency.",null]}}"#
+            ),
+        )
+        .await;
+        assert_eq!(reworded["result"]["text"], "Halved tail latency.");
+
+        call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":7,"method":"variant.delete","params":[{variant_id}]}}"#
+            ),
+        )
+        .await;
+
+        let after = call(
+            router.clone(),
+            &format!(r#"{{"jsonrpc":"2.0","id":8,"method":"bullet.get","params":[{bullet_id}]}}"#),
+        )
+        .await;
+        assert_eq!(after["result"]["variants"].as_array().unwrap().len(), 1);
+        assert_eq!(after["result"]["variants"][0]["is_default"], true);
+
+        call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":9,"method":"bullet.delete","params":[{bullet_id}]}}"#
+            ),
+        )
+        .await;
+
+        let gone = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":10,"method":"bullet.get","params":[{bullet_id}]}}"#),
+        )
+        .await;
+        assert!(gone["result"].is_null());
+    }
+
+    #[tokio::test]
+    async fn deleting_the_last_variant_answers_bullet_invalid() {
+        let (_dir, router) = test_router().await;
+        let entry_id = entry_with_bullets(&router).await;
+        let bullet = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"bullet.create","params":[{entry_id},"One.",null]}}"#
+            ),
+        )
+        .await;
+        let variant_id = bullet["result"]["variants"][0]["id"].as_i64().unwrap();
+
+        let answer = call(
+            router,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":3,"method":"variant.delete","params":[{variant_id}]}}"#
+            ),
+        )
+        .await;
+
+        assert_eq!(answer["error"]["code"], crate::rpc::BULLET_INVALID);
+    }
+
+    #[tokio::test]
+    async fn a_bullet_on_a_type_without_highlights_answers_bullet_invalid() {
+        let (_dir, router) = test_router().await;
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.create","params":["bullet",{"bullet":"Shipped it."}]}"#,
+        )
+        .await;
+        let entry_id = created["result"]["id"].as_i64().unwrap();
+
+        let answer = call(
+            router,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"bullet.create","params":[{entry_id},"One.",null]}}"#
+            ),
+        )
+        .await;
+
+        assert_eq!(answer["error"]["code"], crate::rpc::BULLET_INVALID);
+    }
+
+    #[tokio::test]
+    async fn an_absent_bullet_answers_bullet_not_found() {
+        let (_dir, router) = test_router().await;
+
+        let answer = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"bullet.delete","params":[404]}"#,
+        )
+        .await;
+
+        assert_eq!(answer["error"]["code"], crate::rpc::BULLET_NOT_FOUND);
     }
 
     #[tokio::test]
