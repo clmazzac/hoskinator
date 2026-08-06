@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hoskinator_core::entry::EntryError;
+use hoskinator_core::entry::{Entry, EntryError, EntryFields};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::profile::Profile;
 use hoskinator_core::repository::{
@@ -75,6 +75,31 @@ pub trait SectionRpc {
 }
 
 #[rpc(server, client)]
+pub trait EntryRpc {
+    #[method(name = "entry.create")]
+    async fn entry_create(
+        &self,
+        entry_type: EntryType,
+        fields: serde_json::Value,
+    ) -> RpcResult<Entry>;
+
+    #[method(name = "entry.get")]
+    async fn entry_get(&self, id: i64) -> RpcResult<Option<Entry>>;
+
+    #[method(name = "entry.list")]
+    async fn entry_list(&self, entry_type: Option<EntryType>) -> RpcResult<Vec<Entry>>;
+
+    #[method(name = "entry.eligible")]
+    async fn entry_eligible(&self, section: String) -> RpcResult<Vec<Entry>>;
+
+    #[method(name = "entry.update")]
+    async fn entry_update(&self, id: i64, fields: serde_json::Value) -> RpcResult<Entry>;
+
+    #[method(name = "entry.delete")]
+    async fn entry_delete(&self, id: i64) -> RpcResult<()>;
+}
+
+#[rpc(server, client)]
 pub trait JobDescriptionRpc {
     #[method(name = "jd.create")]
     async fn jd_create(&self, job_description: NewJobDescription) -> RpcResult<JobDescription>;
@@ -130,6 +155,17 @@ pub struct SectionApi {
 }
 
 impl SectionApi {
+    pub fn new(store: Arc<Store>) -> Self {
+        Self { store }
+    }
+}
+
+/// Serves the Entry methods from one store.
+pub struct EntryApi {
+    store: Arc<Store>,
+}
+
+impl EntryApi {
     pub fn new(store: Arc<Store>) -> Self {
         Self { store }
     }
@@ -268,6 +304,52 @@ impl RepositoryRpcServer for RepositoryApi {
 
     async fn repository_log(&self) -> RpcResult<RepositoryLog> {
         self.operation(|repository| repository.log()).await
+    }
+}
+
+#[async_trait]
+impl EntryRpcServer for EntryApi {
+    async fn entry_create(
+        &self,
+        entry_type: EntryType,
+        fields: serde_json::Value,
+    ) -> RpcResult<Entry> {
+        let fields = EntryFields::parse(entry_type, fields)
+            .map_err(|error| store_rpc_error(StoreError::Entry(error)))?;
+
+        self.store
+            .create_entry(&fields)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn entry_get(&self, id: i64) -> RpcResult<Option<Entry>> {
+        self.store.entry(id).await.map_err(store_rpc_error)
+    }
+
+    async fn entry_list(&self, entry_type: Option<EntryType>) -> RpcResult<Vec<Entry>> {
+        self.store
+            .entries(entry_type)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn entry_eligible(&self, section: String) -> RpcResult<Vec<Entry>> {
+        self.store
+            .entries_for_section(&section)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn entry_update(&self, id: i64, fields: serde_json::Value) -> RpcResult<Entry> {
+        self.store
+            .update_entry(id, fields)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn entry_delete(&self, id: i64) -> RpcResult<()> {
+        self.store.delete_entry(id).await.map_err(store_rpc_error)
     }
 }
 
