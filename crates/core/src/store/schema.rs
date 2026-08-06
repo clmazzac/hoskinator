@@ -28,6 +28,18 @@ diesel::table! {
 }
 
 diesel::table! {
+    entry (id) {
+        id -> BigInt,
+        entry_type -> Text,
+        fields -> Text,
+        date -> Nullable<Text>,
+        start_date -> Nullable<Text>,
+        end_date -> Nullable<Text>,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
     section (name) {
         name -> Text,
         entry_type -> Text,

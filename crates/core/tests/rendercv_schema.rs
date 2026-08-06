@@ -1,5 +1,6 @@
 //! Checks that a serialised [`Profile`] is something rendercv will accept.
 
+use hoskinator_core::entry::EntryFields;
 use hoskinator_core::profile::{
     CustomConnection, OneOrMany, Profile, SocialNetwork, SocialNetworkName,
 };
@@ -173,6 +174,71 @@ fn a_section_mixing_entry_types_is_rejected() {
                 !errors(&document).is_empty(),
                 "{entry_type} mixed with {other} should not validate"
             );
+        }
+    }
+}
+
+/// Every field the store holds for the given type.
+fn populated_entry(entry_type: EntryType) -> Value {
+    match entry_type {
+        EntryType::Text => json!("A line of prose."),
+        EntryType::OneLine => json!({ "label": "Languages", "details": "Rust, Python" }),
+        EntryType::Normal => json!({
+            "name": "Hoskinator",
+            "location": "Ithaca, NY",
+            "date": "2025",
+            "start_date": "2025-01",
+            "end_date": "present",
+            "summary": "A resume manager.",
+            "highlights": ["Shipped the store."],
+        }),
+        EntryType::Experience => json!({
+            "company": "Acme",
+            "position": "Engineer",
+            "location": "Remote",
+            "date": "2021",
+            "start_date": "2021-06",
+            "end_date": "present",
+            "summary": "Built services.",
+            "highlights": ["Cut latency in half."],
+        }),
+        EntryType::Education => json!({
+            "institution": "Cornell",
+            "area": "Computer Science",
+            "degree": "BS",
+            "location": "Ithaca, NY",
+            "date": "2024",
+            "start_date": "2020-08",
+            "end_date": "2024-05",
+            "summary": "Systems coursework.",
+            "highlights": ["Graduated with honours."],
+        }),
+        EntryType::Publication => json!({
+            "title": "A Paper",
+            "authors": ["Ada", "**Cam**"],
+            "doi": "10.1000/example",
+            "url": "https://example.com/paper",
+            "journal": "Nature",
+            "date": "2023-04",
+            "summary": "A summary.",
+        }),
+        EntryType::Bullet => json!({ "bullet": "Shipped it." }),
+        EntryType::Numbered => json!({ "number": "Shipped it." }),
+        EntryType::ReversedNumbered => json!({ "reversed_number": "Shipped it." }),
+    }
+}
+
+#[test]
+fn stored_fields_render_as_an_entry_rendercv_accepts() {
+    for entry_type in EntryType::ALL {
+        for input in [entry(entry_type), populated_entry(entry_type)] {
+            let fields = EntryFields::parse(entry_type, input)
+                .unwrap_or_else(|error| panic!("{entry_type} fields rejected: {error}"));
+            let document = with_section(json!([serde_json::to_value(&fields).unwrap()]));
+
+            let errors = errors(&document);
+
+            assert!(errors.is_empty(), "{entry_type} rejected: {errors:#?}");
         }
     }
 }

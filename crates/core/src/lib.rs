@@ -7,6 +7,7 @@
 //! (ADR-0005).
 
 pub mod config;
+pub mod entry;
 pub mod home;
 pub mod job_description;
 pub mod profile;
