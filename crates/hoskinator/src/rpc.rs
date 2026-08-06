@@ -391,6 +391,7 @@ fn store_code_for(error: &StoreError) -> i32 {
         | StoreError::PathEncoding { .. }
         | StoreError::Open { .. }
         | StoreError::Wal { .. }
+        | StoreError::ForeignKeys { .. }
         | StoreError::Migrate { .. }
         | StoreError::SchemaVersion(_) => STORE_UNAVAILABLE,
         StoreError::DecodeProfile { .. } | StoreError::DecodeEntry { .. } => STORE_CORRUPT,
