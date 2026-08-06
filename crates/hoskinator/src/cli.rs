@@ -11,7 +11,8 @@ use jsonrpsee::core::client::Error as ClientError;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
 use crate::rpc::{
-    JobDescriptionRpcClient, ProfileRpcClient, RepositoryRpcClient, SectionRpcClient,
+    EntryRpcClient, JobDescriptionRpcClient, ProfileRpcClient, RepositoryRpcClient,
+    SectionRpcClient,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -30,6 +31,12 @@ pub enum CliError {
     ParseInput(#[source] serde_json::Error),
     #[error("could not render the response")]
     Render(#[source] serde_json::Error),
+
+    #[error("could not read entry fields from standard input")]
+    ReadEntryInput(#[source] std::io::Error),
+
+    #[error("standard input is not JSON")]
+    ParseEntryInput(#[source] serde_json::Error),
 
     #[error("could not read a Job Description from standard input")]
     ReadJobDescriptionInput(#[source] std::io::Error),
@@ -208,6 +215,77 @@ fn table(sections: &[Section]) -> String {
 const NAME_HEADING: &str = "NAME";
 const TYPE_HEADING: &str = "ENTRY TYPE";
 
+/// Creates an entry of `entry_type` from the fields on standard input and prints it.
+pub async fn entry_create(port: u16, entry_type: EntryType) -> Result<(), CliError> {
+    let fields = read_fields(std::io::stdin().lock())?;
+
+    render(
+        client(port)?
+            .entry_create(entry_type, fields)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Prints the entry with `id`, or `null` when it is absent.
+pub async fn entry_get(port: u16, id: i64) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .entry_get(id)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Prints every entry, or only those of one type.
+pub async fn entry_list(port: u16, entry_type: Option<EntryType>) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .entry_list(entry_type)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Prints the entries a section is eligible to hold.
+pub async fn entry_eligible(port: u16, section: &str) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .entry_eligible(section.to_owned())
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Replaces an entry's fields with those on standard input and prints it.
+pub async fn entry_update(port: u16, id: i64) -> Result<(), CliError> {
+    let fields = read_fields(std::io::stdin().lock())?;
+
+    render(
+        client(port)?
+            .entry_update(id, fields)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Deletes an entry.
+pub async fn entry_delete(port: u16, id: i64) -> Result<(), CliError> {
+    client(port)?
+        .entry_delete(id)
+        .await
+        .map_err(|source| classify(source, port))
+}
+
+fn read_fields(mut input: impl std::io::Read) -> Result<serde_json::Value, CliError> {
+    let mut text = String::new();
+    input
+        .read_to_string(&mut text)
+        .map_err(CliError::ReadEntryInput)?;
+
+    serde_json::from_str(&text).map_err(CliError::ParseEntryInput)
+}
+
 /// Creates a Job Description from JSON on standard input and prints its record.
 pub async fn jd_create(port: u16) -> Result<(), CliError> {
     let job_description = read_job_description(std::io::stdin().lock())?;
@@ -380,6 +458,25 @@ mod tests {
         assert!(rendered.contains("8737"), "got {rendered}");
         assert!(rendered.contains("hoskinator serve"), "got {rendered}");
     }
+    #[test]
+    fn entry_fields_are_read_from_json_on_standard_input() {
+        let input = r#"{"company":"Acme","position":"Engineer"}"#;
+
+        let fields = read_fields(input.as_bytes()).unwrap();
+
+        assert_eq!(fields["company"], "Acme");
+    }
+
+    #[test]
+    fn entry_fields_that_are_not_json_are_rejected() {
+        let error = read_fields("not json".as_bytes()).unwrap_err();
+
+        assert!(
+            matches!(error, CliError::ParseEntryInput(_)),
+            "got {error:?}"
+        );
+    }
+
     #[test]
     fn a_job_description_is_read_from_json_on_standard_input() {
         let input = r#"{"title":"Systems engineer","text":"Build Rust services."}"#;
