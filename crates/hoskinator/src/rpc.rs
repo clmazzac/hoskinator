@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use hoskinator_core::bullet::BulletError;
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::profile::Profile;
@@ -44,6 +45,10 @@ pub const SECTION_NOT_FOUND: i32 = -32011;
 pub const ENTRY_INVALID: i32 = -32012;
 /// The request named an entry that is not there.
 pub const ENTRY_NOT_FOUND: i32 = -32013;
+/// The request described a bullet or variant that cannot exist.
+pub const BULLET_INVALID: i32 = -32014;
+/// The request named a bullet or variant that is not there.
+pub const BULLET_NOT_FOUND: i32 = -32015;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -405,7 +410,11 @@ fn store_code_for(error: &StoreError) -> i32 {
         | StoreError::WriteSection(_)
         | StoreError::ReadEntry(_)
         | StoreError::WriteEntry(_)
-        | StoreError::EncodeEntry(_) => STORE_IO,
+        | StoreError::EncodeEntry(_)
+        | StoreError::ReadBullet(_)
+        | StoreError::WriteBullet(_)
+        | StoreError::ReadVariant(_)
+        | StoreError::WriteVariant(_) => STORE_IO,
         StoreError::Section(error) => match error {
             SectionError::BlankName
             | SectionError::DuplicateName { .. }
@@ -415,6 +424,14 @@ fn store_code_for(error: &StoreError) -> i32 {
         StoreError::Entry(error) => match error {
             EntryError::Fields { .. } => ENTRY_INVALID,
             EntryError::NoSuchEntry { .. } => ENTRY_NOT_FOUND,
+        },
+        StoreError::Bullet(error) => match error {
+            BulletError::EntryCarriesNoBullets { .. }
+            | BulletError::BlankText
+            | BulletError::LastVariant { .. } => BULLET_INVALID,
+            BulletError::NoSuchBullet { .. } | BulletError::NoSuchVariant { .. } => {
+                BULLET_NOT_FOUND
+            }
         },
     }
 }
@@ -535,6 +552,8 @@ mod tests {
             SECTION_NOT_FOUND,
             ENTRY_INVALID,
             ENTRY_NOT_FOUND,
+            BULLET_INVALID,
+            BULLET_NOT_FOUND,
         ];
         assert!(codes.iter().all(|code| (-32099..=-32000).contains(code)));
         let unique: std::collections::HashSet<_> = codes.iter().collect();

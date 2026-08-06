@@ -190,7 +190,6 @@ fn populated_entry(entry_type: EntryType) -> Value {
             "start_date": "2025-01",
             "end_date": "present",
             "summary": "A resume manager.",
-            "highlights": ["Shipped the store."],
         }),
         EntryType::Experience => json!({
             "company": "Acme",
@@ -200,7 +199,6 @@ fn populated_entry(entry_type: EntryType) -> Value {
             "start_date": "2021-06",
             "end_date": "present",
             "summary": "Built services.",
-            "highlights": ["Cut latency in half."],
         }),
         EntryType::Education => json!({
             "institution": "Cornell",
@@ -211,7 +209,6 @@ fn populated_entry(entry_type: EntryType) -> Value {
             "start_date": "2020-08",
             "end_date": "2024-05",
             "summary": "Systems coursework.",
-            "highlights": ["Graduated with honours."],
         }),
         EntryType::Publication => json!({
             "title": "A Paper",
@@ -240,6 +237,47 @@ fn stored_fields_render_as_an_entry_rendercv_accepts() {
 
             assert!(errors.is_empty(), "{entry_type} rejected: {errors:#?}");
         }
+    }
+}
+
+/// The name rendercv's schema gives the entry type's definition, if it has one.
+fn definition_of(entry_type: EntryType) -> Option<&'static str> {
+    match entry_type {
+        // A text entry is a bare string, so rendercv defines no object for it.
+        EntryType::Text => None,
+        EntryType::OneLine => Some("rendercv__schema__models__cv__entries__one_line__OneLineEntry"),
+        EntryType::Normal => Some("rendercv__schema__models__cv__entries__normal__NormalEntry"),
+        EntryType::Experience => {
+            Some("rendercv__schema__models__cv__entries__experience__ExperienceEntry")
+        }
+        EntryType::Education => {
+            Some("rendercv__schema__models__cv__entries__education__EducationEntry")
+        }
+        EntryType::Publication => {
+            Some("rendercv__schema__models__cv__entries__publication__PublicationEntry")
+        }
+        EntryType::Bullet => Some("BulletEntry"),
+        EntryType::Numbered => Some("NumberedEntry"),
+        EntryType::ReversedNumbered => Some("ReversedNumberedEntry"),
+    }
+}
+
+#[test]
+fn bullets_are_carried_by_exactly_the_types_rendercv_gives_highlights() {
+    let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+
+    for entry_type in EntryType::ALL {
+        let has_highlights = definition_of(entry_type).is_some_and(|definition| {
+            schema["$defs"][definition]["properties"]
+                .get("highlights")
+                .is_some()
+        });
+
+        assert_eq!(
+            entry_type.carries_bullets(),
+            has_highlights,
+            "{entry_type} disagrees with rendercv about highlights"
+        );
     }
 }
 

@@ -97,6 +97,18 @@ pub enum StoreError {
     #[error("could not encode an entry's fields")]
     EncodeEntry(#[source] serde_json::Error),
 
+    #[error("could not read a bullet")]
+    ReadBullet(#[source] diesel::result::Error),
+
+    #[error("could not write a bullet")]
+    WriteBullet(#[source] diesel::result::Error),
+
+    #[error("could not read a variant")]
+    ReadVariant(#[source] diesel::result::Error),
+
+    #[error("could not write a variant")]
+    WriteVariant(#[source] diesel::result::Error),
+
     #[error("could not create a Job Description")]
     CreateJobDescription(#[source] diesel::result::Error),
 
@@ -111,6 +123,9 @@ pub enum StoreError {
 
     #[error(transparent)]
     Entry(#[from] crate::entry::EntryError),
+
+    #[error(transparent)]
+    Bullet(#[from] crate::bullet::BulletError),
 }
 
 /// The Master Store: every fact and accomplishment statement the user has accumulated.
@@ -332,6 +347,14 @@ mod tests {
                     .select(schema::entry::all_columns)
                     .execute(connection)
                     .expect("selecting every entry column");
+                schema::bullet::table
+                    .select(schema::bullet::all_columns)
+                    .execute(connection)
+                    .expect("selecting every bullet column");
+                schema::variant::table
+                    .select(schema::variant::all_columns)
+                    .execute(connection)
+                    .expect("selecting every variant column");
             })
             .await;
     }
@@ -365,6 +388,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bullets_and_variants_are_indexed_after_migrating() {
+        let (_dir, store) = open_temp_store().await;
+
+        let found = objects_named(
+            &store,
+            "SELECT count(*) AS found FROM sqlite_master WHERE type = 'index' \
+             AND name IN ('bullet_by_entry', 'variant_by_bullet', 'variant_one_default')",
+        )
+        .await;
+
+        assert_eq!(found, 3);
+    }
+
+    #[tokio::test]
     async fn opening_a_version_one_store_applies_the_job_description_migration() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("hoskinator.db");
@@ -388,6 +425,53 @@ mod tests {
             )
             .await,
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn opening_a_version_four_store_moves_highlights_into_bullets() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("hoskinator.db");
+        let mut connection = SqliteConnection::establish(path.to_str().unwrap()).unwrap();
+        connection
+            .batch_execute(&format!(
+                "{}\n{}\n{}\n{}\nPRAGMA user_version = 4;",
+                include_str!("../migrations/0001_profile.sql"),
+                include_str!("../migrations/0002_section.sql"),
+                include_str!("../migrations/0003_job_descriptions.sql"),
+                include_str!("../migrations/0004_entry.sql"),
+            ))
+            .unwrap();
+        connection
+            .batch_execute(
+                r#"INSERT INTO entry (entry_type, fields) VALUES ('experience',
+                   '{"company":"Acme","position":"Engineer","highlights":["One.","Two."]}')"#,
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&path).await.unwrap();
+
+        // Reading the entry at all proves `highlights` was stripped: the field no longer exists,
+        // and unknown fields are rejected.
+        let entries = store.entries(None).await.expect("reading migrated entries");
+        let bullets = store.bullets(entries[0].id).await.unwrap();
+
+        let wording: Vec<(&str, bool)> = bullets
+            .iter()
+            .map(|bullet| {
+                let variant = &bullet.variants[0];
+                (variant.text.as_str(), variant.is_default)
+            })
+            .collect();
+
+        assert_eq!(wording, [("One.", true), ("Two.", true)]);
+        assert_eq!(
+            bullets
+                .iter()
+                .map(|bullet| bullet.position)
+                .collect::<Vec<_>>(),
+            [0, 1]
         );
     }
 

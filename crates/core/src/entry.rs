@@ -39,7 +39,6 @@ pub struct NormalFields {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub summary: Option<String>,
-    pub highlights: Option<Vec<String>>,
 }
 
 /// A rendercv `experience` entry.
@@ -53,7 +52,6 @@ pub struct ExperienceFields {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub summary: Option<String>,
-    pub highlights: Option<Vec<String>>,
 }
 
 /// A rendercv `education` entry.
@@ -68,7 +66,6 @@ pub struct EducationFields {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub summary: Option<String>,
-    pub highlights: Option<Vec<String>>,
 }
 
 /// A rendercv `publication` entry.
@@ -458,8 +455,7 @@ mod tests {
             date: None,
             start_date: Some("2021-06".into()),
             end_date: Some("present".into()),
-            summary: None,
-            highlights: Some(vec!["Shipped the thing.".into()]),
+            summary: Some("Built services.".into()),
         })
     }
 
@@ -487,7 +483,7 @@ mod tests {
         };
 
         assert_eq!(fields.start_date, None);
-        assert_eq!(fields.highlights, None);
+        assert_eq!(fields.summary, None);
     }
 
     #[test]

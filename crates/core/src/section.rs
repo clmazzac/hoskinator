@@ -51,6 +51,14 @@ impl EntryType {
         EntryType::ReversedNumbered,
     ];
 
+    /// Whether entries of this type hold accomplishments as Bullets.
+    pub fn carries_bullets(self) -> bool {
+        matches!(
+            self,
+            EntryType::Normal | EntryType::Experience | EntryType::Education
+        )
+    }
+
     /// How the variant is spelled in the store and over JSON-RPC.
     pub fn as_str(self) -> &'static str {
         match self {
