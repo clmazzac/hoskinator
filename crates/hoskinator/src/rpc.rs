@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hoskinator_core::bullet::BulletError;
+use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::profile::Profile;
@@ -105,6 +105,51 @@ pub trait EntryRpc {
 }
 
 #[rpc(server, client)]
+pub trait BulletRpc {
+    #[method(name = "bullet.create")]
+    async fn bullet_create(
+        &self,
+        entry_id: i64,
+        text: String,
+        note: Option<String>,
+    ) -> RpcResult<Bullet>;
+
+    #[method(name = "bullet.get")]
+    async fn bullet_get(&self, id: i64) -> RpcResult<Option<Bullet>>;
+
+    #[method(name = "bullet.list")]
+    async fn bullet_list(&self, entry_id: i64) -> RpcResult<Vec<Bullet>>;
+
+    #[method(name = "bullet.move")]
+    async fn bullet_move(&self, id: i64, position: i32) -> RpcResult<Vec<Bullet>>;
+
+    #[method(name = "bullet.delete")]
+    async fn bullet_delete(&self, id: i64) -> RpcResult<()>;
+
+    #[method(name = "variant.create")]
+    async fn variant_create(
+        &self,
+        bullet_id: i64,
+        text: String,
+        note: Option<String>,
+    ) -> RpcResult<Variant>;
+
+    #[method(name = "variant.update")]
+    async fn variant_update(
+        &self,
+        id: i64,
+        text: Option<String>,
+        note: Option<String>,
+    ) -> RpcResult<Variant>;
+
+    #[method(name = "variant.set_default")]
+    async fn variant_set_default(&self, id: i64) -> RpcResult<Variant>;
+
+    #[method(name = "variant.delete")]
+    async fn variant_delete(&self, id: i64) -> RpcResult<()>;
+}
+
+#[rpc(server, client)]
 pub trait JobDescriptionRpc {
     #[method(name = "jd.create")]
     async fn jd_create(&self, job_description: NewJobDescription) -> RpcResult<JobDescription>;
@@ -171,6 +216,17 @@ pub struct EntryApi {
 }
 
 impl EntryApi {
+    pub fn new(store: Arc<Store>) -> Self {
+        Self { store }
+    }
+}
+
+/// Serves the Bullet and Variant methods from one store.
+pub struct BulletApi {
+    store: Arc<Store>,
+}
+
+impl BulletApi {
     pub fn new(store: Arc<Store>) -> Self {
         Self { store }
     }
@@ -355,6 +411,75 @@ impl EntryRpcServer for EntryApi {
 
     async fn entry_delete(&self, id: i64) -> RpcResult<()> {
         self.store.delete_entry(id).await.map_err(store_rpc_error)
+    }
+}
+
+#[async_trait]
+impl BulletRpcServer for BulletApi {
+    async fn bullet_create(
+        &self,
+        entry_id: i64,
+        text: String,
+        note: Option<String>,
+    ) -> RpcResult<Bullet> {
+        self.store
+            .create_bullet(entry_id, &text, note.as_deref())
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn bullet_get(&self, id: i64) -> RpcResult<Option<Bullet>> {
+        self.store.bullet(id).await.map_err(store_rpc_error)
+    }
+
+    async fn bullet_list(&self, entry_id: i64) -> RpcResult<Vec<Bullet>> {
+        self.store.bullets(entry_id).await.map_err(store_rpc_error)
+    }
+
+    async fn bullet_move(&self, id: i64, position: i32) -> RpcResult<Vec<Bullet>> {
+        self.store
+            .move_bullet(id, position)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn bullet_delete(&self, id: i64) -> RpcResult<()> {
+        self.store.delete_bullet(id).await.map_err(store_rpc_error)
+    }
+
+    async fn variant_create(
+        &self,
+        bullet_id: i64,
+        text: String,
+        note: Option<String>,
+    ) -> RpcResult<Variant> {
+        self.store
+            .add_variant(bullet_id, &text, note.as_deref())
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn variant_update(
+        &self,
+        id: i64,
+        text: Option<String>,
+        note: Option<String>,
+    ) -> RpcResult<Variant> {
+        self.store
+            .update_variant(id, text.as_deref(), note.as_deref())
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn variant_set_default(&self, id: i64) -> RpcResult<Variant> {
+        self.store
+            .set_default_variant(id)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn variant_delete(&self, id: i64) -> RpcResult<()> {
+        self.store.delete_variant(id).await.map_err(store_rpc_error)
     }
 }
 
