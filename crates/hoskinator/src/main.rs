@@ -43,6 +43,18 @@ enum Command {
         action: EntryAction,
     },
 
+    /// Creates, lists, and orders the Bullets of an Entry.
+    Bullet {
+        #[command(subcommand)]
+        action: BulletAction,
+    },
+
+    /// Words a Bullet, and chooses which wording is the default.
+    Variant {
+        #[command(subcommand)]
+        action: VariantAction,
+    },
+
     /// Creates and manages standalone Job Descriptions.
     #[command(name = "jd")]
     JobDescription {
@@ -111,6 +123,60 @@ enum EntryAction {
     Update { id: i64 },
 
     /// Deletes one entry.
+    Delete { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum BulletAction {
+    /// Creates a bullet on an entry, worded by its first variant.
+    Create {
+        entry_id: i64,
+        text: String,
+
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    /// Prints one bullet with its variants.
+    Get { id: i64 },
+
+    /// Prints every bullet of an entry.
+    List { entry_id: i64 },
+
+    /// Moves a bullet within its entry.
+    Move { id: i64, position: i32 },
+
+    /// Deletes a bullet and its variants.
+    Delete { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum VariantAction {
+    /// Adds another wording to a bullet.
+    Create {
+        bullet_id: i64,
+        text: String,
+
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    /// Rewords a variant, renotes it, or both.
+    Update {
+        id: i64,
+
+        #[arg(long)]
+        text: Option<String>,
+
+        /// An empty note clears it.
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    /// Makes a variant the default wording of its bullet.
+    SetDefault { id: i64 },
+
+    /// Deletes a variant, unless it is the last one.
     Delete { id: i64 },
 }
 
@@ -190,6 +256,39 @@ async fn main() -> ExitCode {
                 .map_err(Into::into),
             EntryAction::Update { id } => cli::entry_update(port, id).await.map_err(Into::into),
             EntryAction::Delete { id } => cli::entry_delete(port, id).await.map_err(Into::into),
+        },
+        Command::Bullet { action } => match action {
+            BulletAction::Create {
+                entry_id,
+                text,
+                note,
+            } => cli::bullet_create(port, entry_id, &text, note)
+                .await
+                .map_err(Into::into),
+            BulletAction::Get { id } => cli::bullet_get(port, id).await.map_err(Into::into),
+            BulletAction::List { entry_id } => {
+                cli::bullet_list(port, entry_id).await.map_err(Into::into)
+            }
+            BulletAction::Move { id, position } => cli::bullet_move(port, id, position)
+                .await
+                .map_err(Into::into),
+            BulletAction::Delete { id } => cli::bullet_delete(port, id).await.map_err(Into::into),
+        },
+        Command::Variant { action } => match action {
+            VariantAction::Create {
+                bullet_id,
+                text,
+                note,
+            } => cli::variant_create(port, bullet_id, &text, note)
+                .await
+                .map_err(Into::into),
+            VariantAction::Update { id, text, note } => cli::variant_update(port, id, text, note)
+                .await
+                .map_err(Into::into),
+            VariantAction::SetDefault { id } => {
+                cli::variant_set_default(port, id).await.map_err(Into::into)
+            }
+            VariantAction::Delete { id } => cli::variant_delete(port, id).await.map_err(Into::into),
         },
         Command::JobDescription { action } => match action {
             JobDescriptionAction::Create => cli::jd_create(port).await.map_err(Into::into),
@@ -384,6 +483,63 @@ mod tests {
             ["hoskinator", "entry", "eligible", "Experience"].as_slice(),
             ["hoskinator", "entry", "update", "17"].as_slice(),
             ["hoskinator", "entry", "delete", "17"].as_slice(),
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_ok(), "{arguments:?}");
+        }
+    }
+
+    #[test]
+    fn a_bullet_is_created_with_its_wording_and_an_optional_note() {
+        let arguments = Cli::parse_from([
+            "hoskinator",
+            "bullet",
+            "create",
+            "17",
+            "Cut latency in half.",
+            "--note",
+            "from the H1 review",
+        ]);
+
+        let Command::Bullet {
+            action:
+                BulletAction::Create {
+                    entry_id,
+                    text,
+                    note,
+                },
+        } = arguments.command
+        else {
+            panic!("expected a bullet create");
+        };
+        assert_eq!(entry_id, 17);
+        assert_eq!(text, "Cut latency in half.");
+        assert_eq!(note.as_deref(), Some("from the H1 review"));
+    }
+
+    #[test]
+    fn a_bullet_without_a_note_parses() {
+        let arguments = Cli::parse_from(["hoskinator", "bullet", "create", "17", "One."]);
+
+        assert!(matches!(
+            arguments.command,
+            Command::Bullet {
+                action: BulletAction::Create { note: None, .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn bullet_and_variant_actions_have_their_own_subcommands() {
+        for arguments in [
+            ["hoskinator", "bullet", "get", "17"].as_slice(),
+            ["hoskinator", "bullet", "list", "17"].as_slice(),
+            ["hoskinator", "bullet", "move", "17", "0"].as_slice(),
+            ["hoskinator", "bullet", "delete", "17"].as_slice(),
+            ["hoskinator", "variant", "create", "17", "One."].as_slice(),
+            ["hoskinator", "variant", "update", "17", "--text", "Two."].as_slice(),
+            ["hoskinator", "variant", "update", "17", "--note", ""].as_slice(),
+            ["hoskinator", "variant", "set-default", "17"].as_slice(),
+            ["hoskinator", "variant", "delete", "17"].as_slice(),
         ] {
             assert!(Cli::try_parse_from(arguments).is_ok(), "{arguments:?}");
         }
