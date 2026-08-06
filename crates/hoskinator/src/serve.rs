@@ -17,8 +17,9 @@ use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
 use crate::rpc::{
-    JobDescriptionApi, JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RepositoryApi,
-    RepositoryRpcServer, ResumeRepositoryProvider, SectionApi, SectionRpcServer,
+    EntryApi, EntryRpcServer, JobDescriptionApi, JobDescriptionRpcServer, ProfileApi,
+    ProfileRpcServer, RepositoryApi, RepositoryRpcServer, ResumeRepositoryProvider, SectionApi,
+    SectionRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
@@ -69,6 +70,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     let mut module = RpcModule::new(());
     module.merge(ProfileApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SectionApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(store).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
@@ -379,6 +381,122 @@ mod tests {
         )
         .await;
         assert!(missing["result"].is_null());
+    }
+
+    #[tokio::test]
+    async fn entry_crud_works_over_http() {
+        let (_dir, router) = test_router().await;
+
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.create","params":["experience",
+               {"company":"Acme","position":"Engineer","start_date":"2021-06"}]}"#,
+        )
+        .await;
+        let id = created["result"]["id"].as_i64().unwrap();
+        assert_eq!(created["result"]["entry_type"], "experience");
+        assert_eq!(created["result"]["fields"]["company"], "Acme");
+
+        let got = call(
+            router.clone(),
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"entry.get","params":[{id}]}}"#),
+        )
+        .await;
+        assert_eq!(got["result"], created["result"]);
+
+        let listed = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":3,"method":"entry.list","params":["experience"]}"#,
+        )
+        .await;
+        assert_eq!(listed["result"].as_array().unwrap().len(), 1);
+
+        let updated = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":4,"method":"entry.update","params":[{id},
+                   {{"company":"Acme","position":"Staff Engineer"}}]}}"#
+            ),
+        )
+        .await;
+        assert_eq!(updated["result"]["fields"]["position"], "Staff Engineer");
+        assert!(updated["result"]["fields"]["start_date"].is_null());
+
+        call(
+            router.clone(),
+            &format!(r#"{{"jsonrpc":"2.0","id":5,"method":"entry.delete","params":[{id}]}}"#),
+        )
+        .await;
+
+        let missing = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":6,"method":"entry.get","params":[{id}]}}"#),
+        )
+        .await;
+        assert!(missing["result"].is_null());
+    }
+
+    #[tokio::test]
+    async fn a_section_is_eligible_for_the_entries_of_its_type_over_http() {
+        let (_dir, router) = test_router().await;
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Education","education"]}"#,
+        )
+        .await;
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"entry.create","params":["education",
+               {"institution":"Cornell","area":"CS"}]}"#,
+        )
+        .await;
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":3,"method":"entry.create","params":["bullet",{"bullet":"Shipped it."}]}"#,
+        )
+        .await;
+
+        let eligible = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":4,"method":"entry.eligible","params":["Education"]}"#,
+        )
+        .await;
+        assert_eq!(eligible["result"].as_array().unwrap().len(), 1);
+        assert_eq!(eligible["result"][0]["fields"]["institution"], "Cornell");
+
+        let missing = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":5,"method":"entry.eligible","params":["Nowhere"]}"#,
+        )
+        .await;
+        assert_eq!(missing["error"]["code"], crate::rpc::SECTION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn fields_the_entry_type_does_not_have_answer_entry_invalid() {
+        let (_dir, router) = test_router().await;
+
+        let answer = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.create","params":["education",
+               {"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+
+        assert_eq!(answer["error"]["code"], crate::rpc::ENTRY_INVALID);
+    }
+
+    #[tokio::test]
+    async fn updating_an_absent_entry_answers_entry_not_found() {
+        let (_dir, router) = test_router().await;
+
+        let answer = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.update","params":[404,{"bullet":"Shipped it."}]}"#,
+        )
+        .await;
+
+        assert_eq!(answer["error"]["code"], crate::rpc::ENTRY_NOT_FOUND);
     }
 
     #[tokio::test]
