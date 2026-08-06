@@ -11,8 +11,8 @@ use jsonrpsee::core::client::Error as ClientError;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
 use crate::rpc::{
-    EntryRpcClient, JobDescriptionRpcClient, ProfileRpcClient, RepositoryRpcClient,
-    SectionRpcClient,
+    BulletRpcClient, EntryRpcClient, JobDescriptionRpcClient, ProfileRpcClient,
+    RepositoryRpcClient, SectionRpcClient,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -284,6 +284,107 @@ fn read_fields(mut input: impl std::io::Read) -> Result<serde_json::Value, CliEr
         .map_err(CliError::ReadEntryInput)?;
 
     serde_json::from_str(&text).map_err(CliError::ParseEntryInput)
+}
+
+/// Creates a bullet on an entry, worded by its first variant.
+pub async fn bullet_create(
+    port: u16,
+    entry_id: i64,
+    text: &str,
+    note: Option<String>,
+) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .bullet_create(entry_id, text.to_owned(), note)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Prints one bullet with its variants.
+pub async fn bullet_get(port: u16, id: i64) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .bullet_get(id)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Prints every bullet of an entry, in order.
+pub async fn bullet_list(port: u16, entry_id: i64) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .bullet_list(entry_id)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Moves a bullet within its entry and prints the new order.
+pub async fn bullet_move(port: u16, id: i64, position: i32) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .bullet_move(id, position)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Deletes a bullet and its variants.
+pub async fn bullet_delete(port: u16, id: i64) -> Result<(), CliError> {
+    client(port)?
+        .bullet_delete(id)
+        .await
+        .map_err(|source| classify(source, port))
+}
+
+/// Adds another wording to a bullet.
+pub async fn variant_create(
+    port: u16,
+    bullet_id: i64,
+    text: &str,
+    note: Option<String>,
+) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .variant_create(bullet_id, text.to_owned(), note)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Rewords a variant, renotes it, or both.
+pub async fn variant_update(
+    port: u16,
+    id: i64,
+    text: Option<String>,
+    note: Option<String>,
+) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .variant_update(id, text, note)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Makes a variant the default wording of its bullet.
+pub async fn variant_set_default(port: u16, id: i64) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .variant_set_default(id)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
+/// Deletes a variant.
+pub async fn variant_delete(port: u16, id: i64) -> Result<(), CliError> {
+    client(port)?
+        .variant_delete(id)
+        .await
+        .map_err(|source| classify(source, port))
 }
 
 /// Creates a Job Description from JSON on standard input and prints its record.
