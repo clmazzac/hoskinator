@@ -19,7 +19,7 @@ use jsonrpsee::RpcModule;
 use crate::rpc::{
     BulletApi, BulletRpcServer, EntryApi, EntryRpcServer, JobDescriptionApi,
     JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RepositoryApi, RepositoryRpcServer,
-    ResumeRepositoryProvider, SectionApi, SectionRpcServer,
+    ResumeRepositoryProvider, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
@@ -72,6 +72,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(SectionApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(store).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
@@ -664,6 +665,66 @@ mod tests {
         .await;
 
         assert_eq!(answer["error"]["code"], crate::rpc::BULLET_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn search_finds_a_wording_and_answers_with_its_bullet() {
+        let (_dir, router) = test_router().await;
+        let entry_id = entry_with_bullets(&router).await;
+        call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"bullet.create","params":[{entry_id},
+                   "Cut p99 latency in half.",null]}}"#
+            ),
+        )
+        .await;
+        call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":3,"method":"bullet.create","params":[{entry_id},
+                   "Rewrote the scheduler.",null]}}"#
+            ),
+        )
+        .await;
+
+        let found = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":4,"method":"search.query","params":["latency"]}"#,
+        )
+        .await;
+
+        let hits = found["result"].as_array().unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["kind"], "bullet");
+        assert_eq!(hits[0]["entry"]["id"], entry_id);
+        assert_eq!(
+            hits[0]["matched_variant"]["text"],
+            "Cut p99 latency in half."
+        );
+        assert_eq!(hits[0]["other_variants"], 0);
+
+        let by_field = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":5,"method":"search.query","params":["Acme"]}"#,
+        )
+        .await;
+
+        assert_eq!(by_field["result"][0]["kind"], "entry");
+        assert_eq!(by_field["result"][0]["entry"]["id"], entry_id);
+    }
+
+    #[tokio::test]
+    async fn a_query_matching_nothing_answers_an_empty_list() {
+        let (_dir, router) = test_router().await;
+
+        let found = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"search.query","params":["underwater"]}"#,
+        )
+        .await;
+
+        assert!(found["result"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
