@@ -539,7 +539,8 @@ fn store_code_for(error: &StoreError) -> i32 {
         | StoreError::ReadBullet(_)
         | StoreError::WriteBullet(_)
         | StoreError::ReadVariant(_)
-        | StoreError::WriteVariant(_) => STORE_IO,
+        | StoreError::WriteVariant(_)
+        | StoreError::Search(_) => STORE_IO,
         StoreError::Section(error) => match error {
             SectionError::BlankName
             | SectionError::DuplicateName { .. }
