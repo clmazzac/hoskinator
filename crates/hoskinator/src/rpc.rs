@@ -13,6 +13,7 @@ use hoskinator_core::repository::{
     Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, RepositoryDiff,
     RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus, ResumeRepository,
 };
+use hoskinator_core::resume::{self, ResumeError};
 use hoskinator_core::search::SearchHit;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
@@ -50,6 +51,14 @@ pub const ENTRY_NOT_FOUND: i32 = -32013;
 pub const BULLET_INVALID: i32 = -32014;
 /// The request named a bullet or variant that is not there.
 pub const BULLET_NOT_FOUND: i32 = -32015;
+/// No resume repository was configured.
+pub const RESUME_UNAVAILABLE: i32 = -32016;
+/// The current branch has no resume.yaml.
+pub const RESUME_NOT_FOUND: i32 = -32017;
+/// Reading, writing, or patching resume.yaml failed.
+pub const RESUME_IO: i32 = -32018;
+/// Writing resume.yaml would not validate against rendercv's schema.
+pub const RESUME_INVALID: i32 = -32019;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -193,6 +202,15 @@ pub trait RepositoryRpc {
 
     #[method(name = "repository.log")]
     async fn repository_log(&self) -> RpcResult<RepositoryLog>;
+}
+
+#[rpc(server, client)]
+pub trait ResumeRpc {
+    #[method(name = "resume.read")]
+    async fn resume_read(&self) -> RpcResult<String>;
+
+    #[method(name = "resume.write")]
+    async fn resume_write(&self, text: String) -> RpcResult<()>;
 }
 
 /// Serves the Profile methods from one store.
@@ -383,6 +401,51 @@ impl RepositoryRpcServer for RepositoryApi {
 
     async fn repository_log(&self) -> RpcResult<RepositoryLog> {
         self.operation(|repository| repository.log()).await
+    }
+}
+
+/// Serves the resume.yaml methods from the configured user-owned worktree.
+pub struct ResumeApi {
+    store: Arc<Store>,
+    repository_path: Option<PathBuf>,
+}
+
+impl ResumeApi {
+    pub fn new(store: Arc<Store>, repository_path: Option<PathBuf>) -> Self {
+        Self {
+            store,
+            repository_path,
+        }
+    }
+
+    fn repository_path(&self) -> RpcResult<PathBuf> {
+        self.repository_path.clone().ok_or_else(resume_unavailable)
+    }
+
+    async fn operation<T, F>(&self, operation: F) -> RpcResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, ResumeError> + Send + 'static,
+    {
+        tokio::task::spawn_blocking(operation)
+            .await
+            .map_err(|error| ErrorObjectOwned::owned(RESUME_IO, error.to_string(), None::<()>))?
+            .map_err(resume_rpc_error)
+    }
+}
+
+#[async_trait]
+impl ResumeRpcServer for ResumeApi {
+    async fn resume_read(&self) -> RpcResult<String> {
+        let path = self.repository_path()?;
+        self.operation(move || resume::read(&path)).await
+    }
+
+    async fn resume_write(&self, text: String) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::write(&path, text, &profile))
+            .await
     }
 }
 
@@ -600,6 +663,31 @@ fn repository_code_for(error: &RepositoryError) -> i32 {
     }
 }
 
+fn resume_code_for(error: &ResumeError) -> i32 {
+    match error {
+        ResumeError::NotFound { .. } => RESUME_NOT_FOUND,
+        ResumeError::Invalid(_) => RESUME_INVALID,
+        ResumeError::Read { .. }
+        | ResumeError::Write { .. }
+        | ResumeError::Parse { .. }
+        | ResumeError::EncodeProfile(_)
+        | ResumeError::Patch { .. }
+        | ResumeError::Decode { .. } => RESUME_IO,
+    }
+}
+
+fn resume_unavailable() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        RESUME_UNAVAILABLE,
+        "no resume repository is configured",
+        None::<()>,
+    )
+}
+
+fn resume_rpc_error(error: ResumeError) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(resume_code_for(&error), source_message(&error), None::<()>)
+}
+
 fn source_message(error: &dyn std::error::Error) -> String {
     let mut message = error.to_string();
     let mut source = error.source();
@@ -688,6 +776,25 @@ mod tests {
     }
 
     #[test]
+    fn resume_errors_have_stable_codes() {
+        assert_eq!(
+            resume_code_for(&ResumeError::NotFound { path: "x".into() }),
+            RESUME_NOT_FOUND
+        );
+        assert_eq!(
+            resume_code_for(&ResumeError::Invalid(vec!["bad".into()])),
+            RESUME_INVALID
+        );
+        assert_eq!(
+            resume_code_for(&ResumeError::Read {
+                path: "x".into(),
+                source: io_error(),
+            }),
+            RESUME_IO
+        );
+    }
+
+    #[test]
     fn every_code_sits_in_the_server_defined_range_and_is_unique() {
         let codes = [
             STORE_UNAVAILABLE,
@@ -705,6 +812,10 @@ mod tests {
             ENTRY_NOT_FOUND,
             BULLET_INVALID,
             BULLET_NOT_FOUND,
+            RESUME_UNAVAILABLE,
+            RESUME_NOT_FOUND,
+            RESUME_IO,
+            RESUME_INVALID,
         ];
         assert!(codes.iter().all(|code| (-32099..=-32000).contains(code)));
         let unique: std::collections::HashSet<_> = codes.iter().collect();
