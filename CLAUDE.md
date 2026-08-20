@@ -91,6 +91,7 @@ Decisions that apply across the whole repo, newest last. Decisions scoped to one
 | Home and config | `docs/decisions/home-and-config.md` |
 | Transport (HTTP + JSON-RPC) | `docs/decisions/transport.md` |
 | Web UI (`web/`) | `docs/decisions/web.md` |
+| Resume YAML (`resume.yaml`) | `docs/decisions/resume.md` |
 
 ### Layout: Cargo workspace at the repo root (Slice 1, #2)
 
