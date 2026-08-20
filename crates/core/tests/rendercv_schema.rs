@@ -4,19 +4,9 @@ use hoskinator_core::entry::EntryFields;
 use hoskinator_core::profile::{
     CustomConnection, OneOrMany, Profile, SocialNetwork, SocialNetworkName,
 };
+use hoskinator_core::resume::{self, SCHEMA, SCHEMA_VERSION};
 use hoskinator_core::section::EntryType;
 use serde_json::{Value, json};
-
-/// rendercv's own emitted JSON Schema.
-const SCHEMA: &str = include_str!("fixtures/rendercv-2.8-schema.json");
-
-/// The rendercv version the vendored schema came from.
-const SCHEMA_VERSION: &str = "2.8";
-
-fn validator() -> jsonschema::Validator {
-    let schema: Value = serde_json::from_str(SCHEMA).expect("the vendored schema is valid JSON");
-    jsonschema::validator_for(&schema).expect("the vendored schema compiles")
-}
 
 /// Wraps a Profile as the `cv:` block of a rendercv document.
 fn as_document(profile: &Profile) -> Value {
@@ -24,10 +14,7 @@ fn as_document(profile: &Profile) -> Value {
 }
 
 fn errors(document: &Value) -> Vec<String> {
-    validator()
-        .iter_errors(document)
-        .map(|error| format!("{} at {}", error, error.instance_path()))
-        .collect()
+    resume::validate(document).err().unwrap_or_default()
 }
 
 fn populated() -> Profile {
