@@ -19,7 +19,8 @@ use jsonrpsee::RpcModule;
 use crate::rpc::{
     BulletApi, BulletRpcServer, EntryApi, EntryRpcServer, JobDescriptionApi,
     JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RepositoryApi, RepositoryRpcServer,
-    ResumeRepositoryProvider, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer,
+    ResumeApi, ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
+    SectionRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
@@ -73,7 +74,8 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
-    module.merge(JobDescriptionApi::new(store).into_rpc())?;
+    module.merge(JobDescriptionApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(ResumeApi::new(store, resume_repo.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
     Ok(Router::new()
@@ -784,6 +786,56 @@ mod tests {
         )
         .await;
         assert!(log["result"]["commits"].is_array());
+    }
+
+    #[tokio::test]
+    async fn resume_methods_are_available_over_json_rpc() {
+        let (dir, router) = repository_router().await;
+        let repo_path = dir.path().join("resume");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        std::fs::write(repo_path.join("resume.yaml"), "cv:\n  name: Old Name\n").unwrap();
+
+        let unavailable = call(
+            test_router().await.1,
+            r#"{"jsonrpc":"2.0","id":1,"method":"resume.read","params":[]}"#,
+        )
+        .await;
+        assert_eq!(unavailable["error"]["code"], -32016);
+
+        let read = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"resume.read","params":[]}"#,
+        )
+        .await;
+        assert_eq!(read["result"], "cv:\n  name: Old Name\n");
+
+        let set = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":3,"method":"profile.set","params":[{"name":"Ada Lovelace"}]}"#,
+        )
+        .await;
+        assert!(set["result"].is_null());
+
+        let edited = "cv:\n  name: Old Name # hand-edited\n  sections:\n    Experience: []\n";
+        let write = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":4,"method":"resume.write","params":[{}]}}"#,
+                serde_json::to_string(edited).unwrap()
+            ),
+        )
+        .await;
+        assert!(write["result"].is_null());
+
+        let read_again = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":5,"method":"resume.read","params":[]}"#,
+        )
+        .await;
+        let written = read_again["result"].as_str().unwrap();
+        assert!(written.contains("name: Ada Lovelace"));
+        assert!(written.contains("# hand-edited"));
+        assert!(written.contains("Experience: []"));
     }
 
     #[tokio::test]
