@@ -15,8 +15,9 @@ allowed-tools:
 
 # Addressing PR Review Comments
 
-Pull review feedback from GitHub and work through it. Cam reviews every line (see `CLAUDE.md`), so
-review comments are the primary channel for course corrections — treat them as authoritative.
+Pull review feedback from GitHub and work through it. A human maintainer reviews every line (see
+`CLAUDE.md`), so review comments are the primary channel for course corrections — treat them as
+authoritative.
 
 ## Why not `gh pr view --comments`
 
@@ -68,8 +69,8 @@ Three distinct sources, all of which matter:
 
 - **Skip `isResolved: true`** threads. Already handled; re-raising them wastes review time.
 - **Skip Graphite's stack comment.** Graphite posts an auto-generated stack map on every PR *using
-  Cam's own account*, so filtering by author will not catch it. Match on its body instead: it
-  contains `This stack of pull requests is managed by` or the trailing
+  the maintainer's own account*, so filtering by author will not catch it. Match on its body
+  instead: it contains `This stack of pull requests is managed by` or the trailing
   `<!-- Current dependencies on/for this PR: -->` marker.
 - **Note `isOutdated: true`** threads but do not silently skip them — the comment is anchored to a
   line that has since changed, so the concern may or may not still apply. Read it and decide.
@@ -165,7 +166,7 @@ mutation($threadId:ID!, $body:String!) {
 ```
 
 **Leave threads unresolved.** Resolving is the reviewer's signal that they are satisfied; closing
-your own threads removes Cam's ability to see what still needs a second look.
+your own threads removes the maintainer's ability to see what still needs a second look.
 
 If you disagreed with a comment and did not make the change, reply saying that explicitly rather
 than staying silent.
