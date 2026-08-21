@@ -57,6 +57,19 @@ export function buildFields(entryType: string, values: Record<string, string>): 
   return fields;
 }
 
+/** A short label for an entry, for lists where the full field set is too much to show. */
+export function describeEntry(entryType: string, fields: unknown): string {
+  if (entryType === "text") {
+    return typeof fields === "string" && fields ? fields : "(empty text)";
+  }
+
+  const held = (fields ?? {}) as Record<string, unknown>;
+  const parts = (ENTRY_FIELDS[entryType] ?? [])
+    .map((name) => held[name])
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  return parts.length > 0 ? parts.join(" — ") : `(empty ${entryType})`;
+}
+
 /** Reads an entry's stored fields back into the form. */
 export function readFields(entryType: string, fields: unknown): Record<string, string> {
   if (entryType === "text") {

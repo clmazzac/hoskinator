@@ -43,6 +43,19 @@ export function setProfile(profile: unknown): Promise<null> {
   return call<null>("profile.set", [profile]);
 }
 
+/** The current branch's resume.yaml, verbatim. */
+export function readResume(): Promise<string> {
+  return call<string>("resume.read", []);
+}
+
+/**
+ * Replaces resume.yaml with `text`. The daemon merges the Profile's fields into `text`'s `cv:`
+ * block before validating and writing, so `text` only needs to hold what the client placed.
+ */
+export function writeResume(text: string): Promise<null> {
+  return call<null>("resume.write", [text]);
+}
+
 /** A section as the store holds it. */
 export interface Section {
   name: string;

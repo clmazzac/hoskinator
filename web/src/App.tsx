@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { ResumeBuilder } from "./components/ResumeBuilder";
 import {
   ENTRY_FIELDS,
   TEXT_FIELD,
@@ -44,7 +45,7 @@ import {
   type Section,
 } from "./rpc";
 
-/** A harness for exercising the JSON-RPC contract from a browser, not the product UI. */
+/** Renders the resume builder, plus the Slice 1-8 JSON-RPC harness tucked behind a disclosure. */
 export default function App() {
   const [text, setText] = useState("");
   const [status, setStatus] = useState("Loading…");
@@ -150,7 +151,15 @@ export default function App() {
 
   return (
     <main>
-      <h1>Hoskinator</h1>
+      <h1 className="p-6 pb-0 font-heading text-2xl font-semibold">Hoskinator</h1>
+
+      <ResumeBuilder />
+
+      <hr />
+
+      <details>
+        <summary>Debug harness (raw JSON-RPC)</summary>
+
       <section>
         <h2>Profile</h2>
         <p>Profile, as JSON-RPC returns it.</p>
@@ -257,6 +266,7 @@ export default function App() {
         spellCheck={false}
         aria-label="Repository JSON-RPC response"
       />
+      </details>
     </main>
   );
 }
