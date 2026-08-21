@@ -1,7 +1,8 @@
 # Web UI decisions
 
 Decisions shaping the web UI in `web/`, newest last. Repo-wide decisions live in `CLAUDE.md`;
-architectural ones in `docs/adr/`.
+architectural ones in `docs/adr/`. The resume editor's design is in
+`docs/design/resume-editor.md`.
 
 ## React + Vite + TypeScript (Slice 1, #2)
 
