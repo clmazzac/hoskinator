@@ -25,7 +25,8 @@ small enough to review on its own and build on the one below it. See `.claude/sk
 
 ### The maintainer reviews every line
 
-Cam reads every line of generated code before it lands, to keep AI slop out of the codebase.
+A human maintainer reads every line of generated code before it lands, to keep AI slop out of the
+codebase.
 
 **How to apply:** optimise for reviewability over throughput. Keep PRs small and single-purpose,
 prefer several small PRs to one large one, and stop for review at the points where an API surface
@@ -65,19 +66,20 @@ Do not pick libraries, frameworks, schema shapes, or API surfaces unilaterally. 
 trade-offs and get sign-off before writing code. Record what gets decided in `docs/decisions/`, or
 in the log below if it applies repo-wide.
 
-### Product design is the maintainer's, and is done by hand
+### Product design is decided by a human
 
-Layout, visual design, interaction, and user-facing wording are not generated. Cam produces them
-manually. This is a stronger rule than the one above: those decisions are not delegated even when
-options are offered.
+Layout, visual design, interaction, and user-facing wording are decided by a human developer. Claude
+may consult — offer options with trade-offs, critique a mockup, point at references — and may build
+what a human has decided. Claude does not make the call. The rule above asks for sign-off; this one
+also fixes who can give it.
 
 **Why:** AI is not yet good at product design, and design smuggled into an infrastructure PR is the
 hardest kind to catch — it arrives as working code with taste already baked in.
 
-**How to apply:** when a user-facing surface is needed before its design exists, build the smallest
-thing that proves the machinery and looks unfinished on purpose — raw data over an invented form.
-Never let a UI decision ride along in a PR that is nominally about something else. See
-`docs/decisions/web.md`.
+**How to apply:** when a user-facing surface is needed before its design exists, put the decision to
+a human, or build the smallest thing that proves the machinery and looks unfinished on purpose — raw
+data over an invented form. Never let a UI decision ride along in a PR that is nominally about
+something else. See `docs/decisions/web.md`.
 
 ## Decision log
 

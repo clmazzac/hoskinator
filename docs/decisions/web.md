@@ -13,11 +13,11 @@ irrelevant for a localhost-served single-user tool.
 Windows install and broke Vite builds run from WSL. `node` and `npm` now resolve to linuxbrew ahead
 of `/mnt/c/Program Files/nodejs`.
 
-## Product design is done by hand, not generated (Slice 1, #2)
+## Product design is decided by a human (Slice 1, #2)
 
-Layout, visual design, interaction, and the wording a user reads are the maintainer's, produced
-manually. An agent does not choose them, and does not arrive at them as a side effect of building
-something else.
+Layout, visual design, interaction, and the wording a user reads are decided by a human developer.
+An agent may offer options, critique a design, and build one a human has settled. It does not choose
+them, and does not arrive at them as a side effect of building something else.
 
 **Why:** AI is not yet good at product design, and design decisions smuggled into an
 infrastructure PR are the hardest kind to notice — they arrive as working code with taste already
