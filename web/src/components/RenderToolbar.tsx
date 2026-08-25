@@ -52,7 +52,7 @@ export default function RenderToolbar({
   onCollapse: () => void;
   problemCount?: number;
 }) {
-  const [autoCompile, setAutoCompile] = useState(false);
+  const [autoRender, setAutoRender] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [page, setPage] = useState(1);
   const pageCount = 1;
@@ -64,7 +64,7 @@ export default function RenderToolbar({
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
       <div className="flex items-center">
         <Button size="sm" className="h-7 rounded-r-none px-3">
-          Compile
+          Render
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -72,7 +72,7 @@ export default function RenderToolbar({
               <Button
                 size="sm"
                 className="h-7 rounded-l-none border-l border-background/25 px-1.5"
-                aria-label="Compile options"
+                aria-label="Render options"
               >
                 <ChevronDown className="size-3.5" />
               </Button>
@@ -80,22 +80,22 @@ export default function RenderToolbar({
           />
           <DropdownMenuContent align="start" className="w-56">
             <div className="flex items-center justify-between gap-3 px-2 py-1.5 text-sm">
-              <label htmlFor="auto-compile">Auto compile</label>
+              <label htmlFor="auto-render">Auto render</label>
               <Switch
-                id="auto-compile"
+                id="auto-render"
                 size="sm"
-                checked={autoCompile}
-                onCheckedChange={setAutoCompile}
+                checked={autoRender}
+                onCheckedChange={setAutoRender}
               />
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Compile from scratch</DropdownMenuItem>
+            <DropdownMenuItem>Render from scratch</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
       <div className="relative">
-        <ToolbarButton label="Compile output" disabled={problemCount === 0}>
+        <ToolbarButton label="Render output" disabled={problemCount === 0}>
           <FileText className="size-4" />
         </ToolbarButton>
         {problemCount > 0 && (
