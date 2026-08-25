@@ -14,7 +14,7 @@ use hoskinator_core::repository::{
     Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, RepositoryDiff,
     RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus, ResumeRepository,
 };
-use hoskinator_core::resume::{self, ResumeError, ResumeSection};
+use hoskinator_core::resume::{self, Design, ResumeError, ResumeSection};
 use hoskinator_core::search::SearchHit;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
@@ -242,8 +242,11 @@ pub trait ResumeRpc {
     async fn resume_place_entry(&self, section: String, fields: serde_json::Value)
     -> RpcResult<()>;
 
-    #[method(name = "resume.theme")]
-    async fn resume_theme(&self) -> RpcResult<Option<String>>;
+    #[method(name = "resume.design")]
+    async fn resume_design(&self) -> RpcResult<Design>;
+
+    #[method(name = "resume.set_top_note")]
+    async fn resume_set_top_note(&self, show: bool) -> RpcResult<()>;
 
     #[method(name = "resume.themes")]
     async fn resume_themes(&self) -> RpcResult<Vec<String>>;
@@ -562,9 +565,16 @@ impl ResumeRpcServer for ResumeApi {
             .await
     }
 
-    async fn resume_theme(&self) -> RpcResult<Option<String>> {
+    async fn resume_design(&self) -> RpcResult<Design> {
         let path = self.repository_path()?;
-        self.operation(move || resume::theme(&path)).await
+        self.operation(move || resume::design(&path)).await
+    }
+
+    async fn resume_set_top_note(&self, show: bool) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::set_top_note(&path, show, &profile))
+            .await
     }
 
     async fn resume_themes(&self) -> RpcResult<Vec<String>> {

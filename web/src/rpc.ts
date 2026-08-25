@@ -355,8 +355,18 @@ export function renderPreview(): Promise<RenderedPdf> {
   return call<RenderedPdf>("render.preview", []);
 }
 
-export function resumeTheme(): Promise<string | null> {
-  return call<string | null>("resume.theme", []);
+/** Everything under `design:` the picker can set. */
+export interface Design {
+  theme: string | null;
+  show_top_note: boolean;
+}
+
+export function resumeDesign(): Promise<Design> {
+  return call<Design>("resume.design", []);
+}
+
+export function setTopNote(show: boolean): Promise<null> {
+  return call<null>("resume.set_top_note", [show]);
 }
 
 export function resumeThemes(): Promise<string[]> {

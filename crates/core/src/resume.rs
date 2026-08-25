@@ -26,6 +26,12 @@ const DESIGN_KEY: &str = "design";
 /// The `design:` key naming the theme.
 const THEME_KEY: &str = "theme";
 
+/// The `design:` key holding page options.
+const PAGE_KEY: &str = "page";
+
+/// The `design.page` key showing the "Last updated in …" note.
+const TOP_NOTE_KEY: &str = "show_top_note";
+
 /// The themes rendercv ships. The picker offers these and nothing else, so every document the
 /// engine writes stays inside the closed union the schema models (ADR-0006, as amended).
 pub const THEMES: &[&str] = &[
@@ -323,18 +329,88 @@ pub fn place_entry(
     apply(repository_path, &document, &[create, as_block], profile)
 }
 
-/// The theme the resume renders with, if it names one.
-pub fn theme(repository_path: &Path) -> Result<Option<String>, ResumeError> {
+/// How the resume looks: everything under `design:` the picker can set.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Design {
+    /// The theme it renders with, if it names one.
+    pub theme: Option<String>,
+    /// Whether the "Last updated in …" note prints. rendercv shows it unless told not to.
+    pub show_top_note: bool,
+}
+
+/// Reads the `design:` block.
+pub fn design(repository_path: &Path) -> Result<Design, ResumeError> {
     let path = repository_path.join(FILENAME);
     let text = read(repository_path)?;
     let document: yaml_serde::Value =
         yaml_serde::from_str(&text).map_err(|source| ResumeError::Decode { path, source })?;
+    let block = document.get(DESIGN_KEY);
 
-    Ok(document
-        .get(DESIGN_KEY)
-        .and_then(|design| design.get(THEME_KEY))
-        .and_then(|theme| theme.as_str())
-        .map(str::to_string))
+    Ok(Design {
+        theme: block
+            .and_then(|design| design.get(THEME_KEY))
+            .and_then(|theme| theme.as_str())
+            .map(str::to_string),
+        show_top_note: block
+            .and_then(|design| design.get(PAGE_KEY))
+            .and_then(|page| page.get(TOP_NOTE_KEY))
+            .and_then(|shown| shown.as_bool())
+            .unwrap_or(true),
+    })
+}
+
+/// Shows or hides the "Last updated in …" note.
+pub fn set_top_note(
+    repository_path: &Path,
+    show: bool,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let (_, document) = load(repository_path)?;
+    let design_route = yamlpath::Route::default().with_key(DESIGN_KEY);
+    let page_route = design_route.clone().with_key(PAGE_KEY);
+    let note_route = page_route.clone().with_key(TOP_NOTE_KEY);
+    let shown = yaml_serde::Value::Bool(show);
+
+    let patch = if document.query_exists(&note_route) {
+        yamlpatch::Patch {
+            route: note_route,
+            operation: yamlpatch::Op::Replace(shown),
+        }
+    } else if document.query_exists(&page_route) {
+        yamlpatch::Patch {
+            route: page_route,
+            operation: yamlpatch::Op::Add {
+                key: TOP_NOTE_KEY.to_string(),
+                value: shown,
+            },
+        }
+    } else {
+        let mut page = yaml_serde::Mapping::new();
+        page.insert(yaml_serde::Value::String(TOP_NOTE_KEY.to_string()), shown);
+        let page = yaml_serde::Value::Mapping(page);
+
+        if document.query_exists(&design_route) {
+            yamlpatch::Patch {
+                route: design_route,
+                operation: yamlpatch::Op::Add {
+                    key: PAGE_KEY.to_string(),
+                    value: page,
+                },
+            }
+        } else {
+            let mut block = yaml_serde::Mapping::new();
+            block.insert(yaml_serde::Value::String(PAGE_KEY.to_string()), page);
+            yamlpatch::Patch {
+                route: yamlpath::Route::default(),
+                operation: yamlpatch::Op::Add {
+                    key: DESIGN_KEY.to_string(),
+                    value: yaml_serde::Value::Mapping(block),
+                },
+            }
+        }
+    };
+
+    apply(repository_path, &document, &[patch], profile)
 }
 
 /// Sets the resume's theme, adding a `design:` block if it has none.

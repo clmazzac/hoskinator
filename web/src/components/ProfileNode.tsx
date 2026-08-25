@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Plus, X } from "lucide-react";
 
 import EditableText from "@/components/EditableText";
+import { Button } from "@/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
@@ -141,66 +142,90 @@ export default function ProfileNode() {
               </Row>
             ))}
 
-            {networks.map((connection, index) => (
-              <Row key={index} label={index === 0 ? "connections" : ""}>
-                <Select
-                  value={connection.network}
-                  onValueChange={(network) => {
-                    if (!network) return;
-                    const next = networks.map((held, at) =>
-                      at === index ? { ...held, network } : held,
-                    );
-                    commit({ ...profile, social_networks: next });
+            <div className="flex items-baseline gap-2 py-0.5">
+              <span className="w-20 shrink-0 text-right text-[10px] text-muted-foreground">
+                connections
+              </span>
+              <div className="flex flex-1 flex-col gap-1">
+                {networks.length === 0 && (
+                  <span className="text-xs text-muted-foreground/60">None.</span>
+                )}
+                {networks.map((connection, index) => (
+                  <div key={index} className="group flex items-center gap-1">
+                    <Select
+                      value={connection.network}
+                      onValueChange={(network) => {
+                        if (!network) return;
+                        commit({
+                          ...profile,
+                          social_networks: networks.map((held, at) =>
+                            at === index ? { ...held, network } : held,
+                          ),
+                        });
+                      }}
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        className="h-6 w-32 shrink-0 text-xs"
+                        aria-label="Network"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {NETWORKS.map((name) => (
+                          <SelectItem key={name} value={name} className="text-xs">
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <EditableText
+                      value={connection.username}
+                      onCommit={(username) =>
+                        commit({
+                          ...profile,
+                          social_networks: networks.map((held, at) =>
+                            at === index ? { ...held, username } : held,
+                          ),
+                        })
+                      }
+                      placeholder="username"
+                      className="flex-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${connection.network} connection`}
+                      title="Remove"
+                      className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                      onClick={() =>
+                        commit({
+                          ...profile,
+                          social_networks: networks.filter((_, at) => at !== index),
+                        })
+                      }
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-fit gap-1 px-1.5 text-xs font-normal text-muted-foreground"
+                  onClick={() => {
+                    const taken = new Set(networks.map((held) => held.network));
+                    const free = NETWORKS.find((name) => !taken.has(name)) ?? "GitHub";
+                    commit({
+                      ...profile,
+                      social_networks: [...networks, { network: free, username: "" }],
+                    });
                   }}
                 >
-                  <SelectTrigger
-                    size="sm"
-                    className="h-6 w-32 border-transparent text-xs shadow-none hover:border-border"
-                    aria-label="Network"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {NETWORKS.map((name) => (
-                      <SelectItem key={name} value={name} className="text-xs">
-                        {name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <EditableText
-                  value={connection.username}
-                  onCommit={(username) => {
-                    const next = networks
-                      .map((held, at) =>
-                        at === index ? { ...held, username: username.trim() } : held,
-                      )
-                      .filter((held) => held.username !== "");
-                    commit({ ...profile, social_networks: next });
-                  }}
-                  placeholder="(empty — commit to remove)"
-                  className="flex-1 text-xs"
-                />
-              </Row>
-            ))}
-
-            <Row label={networks.length === 0 ? "connections" : ""}>
-              <EditableText
-                value=""
-                onCommit={(username) => {
-                  if (!username.trim()) return;
-                  commit({
-                    ...profile,
-                    social_networks: [
-                      ...networks,
-                      { network: "GitHub", username: username.trim() },
-                    ],
-                  });
-                }}
-                placeholder="add a username…"
-                className="flex-1 text-xs"
-              />
-            </Row>
+                  <Plus className="size-3" />
+                  Add connection
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </CollapsibleContent>
