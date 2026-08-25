@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, Home, Moon, Redo2, Sun, Undo2 } from "lucide-react";
+import { ChevronDown, GitBranch, Home, Moon, Redo2, Sun, Undo2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +17,7 @@ import { useHistory, useHistoryShortcuts } from "@/lib/history";
 import { go } from "@/lib/route";
 import { isDark, setDark } from "@/lib/theme";
 import {
+  repositoryState,
   resumeDesign,
   resumeThemes,
   setResumeTheme,
@@ -34,10 +35,15 @@ export default function MenuBar({
   const [dark, setDarkState] = useState(isDark);
   const [design, setDesign] = useState<Design | null>(null);
   const [styles, setStyles] = useState<string[]>([]);
+  const [branch, setBranch] = useState<string | null>(null);
 
   useEffect(() => {
     resumeThemes().then(setStyles, () => setStyles([]));
     resumeDesign().then(setDesign, () => setDesign(null));
+    repositoryState().then(
+      (state) => setBranch(state.head?.branch ?? null),
+      () => setBranch(null),
+    );
   }, []);
 
   const revise = (next: Design, write: Promise<unknown>) => {
@@ -89,6 +95,16 @@ export default function MenuBar({
         <Redo2 className="size-3.5" />
         Redo
       </Button>
+
+      {branch && (
+        <span
+          className="ml-2 flex min-w-0 items-center gap-1 text-xs text-muted-foreground"
+          title={`Editing ${branch}`}
+        >
+          <GitBranch className="size-3.5 shrink-0" />
+          <span className="max-w-64 truncate font-mono text-[11px]">{branch}</span>
+        </span>
+      )}
 
       <div className="flex-1" />
 
