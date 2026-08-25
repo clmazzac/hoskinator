@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -9,9 +9,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { parseSheet } from "@/lib/sheet";
-import { createApplication } from "@/rpc";
+import { createApplication, linkSheet, sheetCsv, workspaceStatus } from "@/rpc";
 
 export default function SheetImport({
   open,
@@ -25,6 +27,49 @@ export default function SheetImport({
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [linked, setLinked] = useState<string | null>(null);
+  const [linkInput, setLinkInput] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    workspaceStatus().then(
+      (status) => setLinked(status.applications_sheet),
+      () => setLinked(null),
+    );
+  }, [open]);
+
+  const link = () => {
+    setLinking(true);
+    setError(null);
+    linkSheet(linkInput).then(
+      (status) => {
+        setLinking(false);
+        setLinkInput("");
+        setLinked(status.applications_sheet);
+      },
+      (failure: Error) => {
+        setLinking(false);
+        setError(failure.message);
+      },
+    );
+  };
+
+  const sync = () => {
+    setSyncing(true);
+    setError(null);
+    sheetCsv().then(
+      (text) => {
+        setSyncing(false);
+        setPasted(text);
+      },
+      (failure: Error) => {
+        setSyncing(false);
+        setError(failure.message);
+      },
+    );
+  };
 
   const rows = pasted.trim() === "" ? [] : parseSheet(pasted);
 
@@ -58,8 +103,55 @@ export default function SheetImport({
           <DialogTitle>Import from a sheet</DialogTitle>
         </DialogHeader>
 
+        <div className="grid gap-1.5">
+          <Label className="text-xs">Linked sheet</Label>
+          {linked ? (
+            <div className="flex items-center gap-2">
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${linked}/edit`}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate font-mono text-xs text-muted-foreground underline underline-offset-2"
+              >
+                {linked}
+              </a>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 text-xs"
+                disabled={syncing}
+                onClick={sync}
+              >
+                {syncing ? "Syncing…" : "Sync now"}
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Input
+                value={linkInput}
+                onChange={(event) => setLinkInput(event.target.value)}
+                placeholder="Paste a Google Sheets link"
+                className="h-7 text-xs"
+                spellCheck={false}
+              />
+              <Button
+                size="sm"
+                className="h-7 shrink-0 text-xs"
+                disabled={linking || linkInput.trim() === ""}
+                onClick={link}
+              >
+                {linking ? "Linking…" : "Link"}
+              </Button>
+            </div>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Must be shared "Anyone with the link" as a viewer. Read-only — writes still go through
+            Export.
+          </p>
+        </div>
+
         <p className="text-xs text-muted-foreground">
-          Select the rows in Google Sheets, including the heading row, and paste. Columns
+          Or select the rows in Google Sheets, including the heading row, and paste. Columns
           are matched by their headings.
         </p>
 

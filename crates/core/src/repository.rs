@@ -31,6 +31,12 @@ pub enum RepositoryError {
     IdentityUnavailable(#[source] git2::Error),
     #[error("repository operation failed")]
     Operation(#[source] git2::Error),
+    #[error("could not write {path}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,6 +352,22 @@ impl ResumeRepository {
             )
             .map_err(RepositoryError::Operation)?;
         self.record(id)
+    }
+
+    /// Writes `contents` to `relative_path` within the repository and stages it, so the next
+    /// `commit` picks it up alongside whatever else changed.
+    pub fn write_staged(&self, relative_path: &str, contents: &str) -> Result<(), RepositoryError> {
+        let workdir = self.repository.workdir().ok_or_else(|| {
+            RepositoryError::Operation(git2::Error::from_str("repository has no working directory"))
+        })?;
+        let path = workdir.join(relative_path);
+        std::fs::write(&path, contents).map_err(|source| RepositoryError::Io { path, source })?;
+
+        let mut index = self.repository.index().map_err(RepositoryError::Operation)?;
+        index
+            .add_path(Path::new(relative_path))
+            .map_err(RepositoryError::Operation)?;
+        index.write().map_err(RepositoryError::Operation)
     }
 
     pub fn status(&self) -> Result<RepositoryStatus, RepositoryError> {
@@ -848,6 +870,46 @@ mod tests {
             .unwrap();
         assert_eq!(commit.message, "remove resume");
         assert!(repository.status().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn a_staged_write_lands_in_the_next_commit() {
+        let (dir, repository) = seeded();
+
+        repository
+            .write_staged("applications.csv", "Company,Position\nAcme,Engineer\n")
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("applications.csv")).unwrap(),
+            "Company,Position\nAcme,Engineer\n"
+        );
+        let record = repository
+            .commit(CommitRequest {
+                message: "sync applications".into(),
+            })
+            .unwrap();
+        assert_eq!(record.message, "sync applications");
+        assert!(repository.status().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn a_staged_write_replaces_the_previous_contents() {
+        let (dir, repository) = seeded();
+        repository.write_staged("applications.csv", "first\n").unwrap();
+        repository
+            .commit(CommitRequest {
+                message: "first sync".into(),
+            })
+            .unwrap();
+
+        repository.write_staged("applications.csv", "second\n").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("applications.csv")).unwrap(),
+            "second\n"
+        );
+        assert_eq!(repository.status().unwrap().entries[0].path, "applications.csv");
     }
 
     #[test]

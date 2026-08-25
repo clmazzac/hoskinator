@@ -142,6 +142,7 @@ mod tests {
         Config {
             home: Some(PathBuf::from(path)),
             resume_repo: None,
+            applications_sheet: None,
         }
     }
 

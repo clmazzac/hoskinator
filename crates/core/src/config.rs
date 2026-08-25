@@ -17,6 +17,8 @@ pub struct Config {
     pub home: Option<PathBuf>,
     /// The configured standard Git worktree for the user's resume.
     pub resume_repo: Option<PathBuf>,
+    /// The id of the Google Sheet the application tracker syncs from.
+    pub applications_sheet: Option<String>,
 }
 
 /// A configuration file exists but could not be used.

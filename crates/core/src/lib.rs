@@ -19,5 +19,6 @@ pub mod repository;
 pub mod resume;
 pub mod search;
 pub mod section;
+pub mod sheets;
 pub mod store;
 pub mod workspace;

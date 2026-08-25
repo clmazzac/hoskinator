@@ -20,16 +20,28 @@ const COLUMNS: Record<keyof NewApplication, string[]> = {
 
 const STATUSES = ["draft", "applied", "interview", "offer", "rejected"];
 
-/// Splits one delimited line, honouring quoted fields.
-function cells(line: string, delimiter: string): string[] {
-  const out: string[] = [];
+/// Splits delimited text into rows of cells, honouring quotes — including a delimiter or a
+/// literal newline inside one, which a cell exported from Sheets can carry.
+function rows(text: string, delimiter: string): string[][] {
+  const table: string[][] = [];
+  let row: string[] = [];
   let held = "";
   let quoted = false;
 
-  for (let at = 0; at < line.length; at += 1) {
-    const character = line[at];
+  const endCell = () => {
+    row.push(held.trim());
+    held = "";
+  };
+  const endRow = () => {
+    endCell();
+    table.push(row);
+    row = [];
+  };
+
+  for (let at = 0; at < text.length; at += 1) {
+    const character = text[at];
     if (quoted) {
-      if (character === '"' && line[at + 1] === '"') {
+      if (character === '"' && text[at + 1] === '"') {
         held += '"';
         at += 1;
       } else if (character === '"') {
@@ -40,14 +52,18 @@ function cells(line: string, delimiter: string): string[] {
     } else if (character === '"') {
       quoted = true;
     } else if (character === delimiter) {
-      out.push(held.trim());
-      held = "";
+      endCell();
+    } else if (character === "\r") {
+      // Skipped; "\n" (or the loop ending) closes the row.
+    } else if (character === "\n") {
+      endRow();
     } else {
       held += character;
     }
   }
-  out.push(held.trim());
-  return out;
+  if (held !== "" || row.length > 0) endRow();
+
+  return table.filter((cells) => cells.some((cell) => cell !== ""));
 }
 
 function delimiterOf(text: string): string {
@@ -71,13 +87,35 @@ function readStatus(written: string): string {
   return STATUSES.find((status) => lowered.startsWith(status)) ?? "draft";
 }
 
-/// Reads pasted rows into applications. The first line must be the headings.
-export function parseSheet(text: string): NewApplication[] {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
-  if (lines.length < 2) return [];
+/// How many fields a candidate heading row's cells match, lowercased.
+function headingScore(cells: string[]): number {
+  const headings = cells.map((heading) => heading.toLowerCase());
+  return (Object.keys(COLUMNS) as (keyof NewApplication)[]).filter((field) =>
+    headings.some((heading) =>
+      COLUMNS[field].some((candidate) => heading === candidate || heading.includes(candidate)),
+    ),
+  ).length;
+}
 
-  const delimiter = delimiterOf(text);
-  const headings = cells(lines[0], delimiter).map((heading) => heading.toLowerCase());
+/// Finds the heading row: the one whose cells best match known headings. A synced sheet often
+/// carries a title or a summary block above its real table, which this skips past.
+function findHeadingRow(table: string[][]): number {
+  let best = { at: 0, score: 0 };
+  for (let at = 0; at < table.length; at += 1) {
+    const score = headingScore(table[at]);
+    if (score > best.score) best = { at, score };
+  }
+  return best.score >= 3 ? best.at : 0;
+}
+
+/// Reads rows into applications, from wherever the headings sit — the first row by default, or
+/// further down if it looks like a synced sheet's title or summary block sits above them.
+export function parseSheet(text: string): NewApplication[] {
+  const table = rows(text, delimiterOf(text));
+  if (table.length < 2) return [];
+
+  const headingRow = findHeadingRow(table);
+  const headings = table[headingRow].map((heading) => heading.toLowerCase());
 
   const columnFor = (field: keyof NewApplication) =>
     headings.findIndex((heading) =>
@@ -97,9 +135,8 @@ export function parseSheet(text: string): NewApplication[] {
   const read = (row: string[], index: number) =>
     index >= 0 && index < row.length ? row[index] : "";
 
-  return lines
-    .slice(1)
-    .map((line) => cells(line, delimiter))
+  return table
+    .slice(headingRow + 1)
     .filter((row) => read(row, at.company) !== "" || read(row, at.position) !== "")
     .map((row) => ({
       company: read(row, at.company),

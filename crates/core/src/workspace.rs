@@ -44,10 +44,12 @@ pub struct WorkspaceStatus {
     pub repository_ready: bool,
     /// The `origin` remote's URL, if the repository has one.
     pub remote_url: Option<String>,
+    /// The id of the Google Sheet the application tracker syncs from, if one is linked.
+    pub applications_sheet: Option<String>,
 }
 
 /// Reads how the workspace stands.
-pub fn status(repository_path: Option<&Path>) -> WorkspaceStatus {
+pub fn status(repository_path: Option<&Path>, applications_sheet: Option<&str>) -> WorkspaceStatus {
     let gh_installed = which(GH);
     let github_login = if gh_installed { login() } else { None };
     let repository_ready = repository_path.is_some_and(|path| path.join(".git").exists());
@@ -63,6 +65,7 @@ pub fn status(repository_path: Option<&Path>) -> WorkspaceStatus {
         repository_path: repository_path.map(Path::to_path_buf),
         repository_ready,
         remote_url,
+        applications_sheet: applications_sheet.map(str::to_string),
     }
 }
 
