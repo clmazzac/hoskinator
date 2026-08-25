@@ -9,18 +9,23 @@ import {
 import SaveToBank from "@/components/SaveToBank";
 import { entryLabel } from "@/entryFields";
 import {
+  carriesElement,
   carriesEntry,
-  carriesMove,
+  carriesEntryMove,
   carriesSection,
   carriesWording,
+  carriesWordingMove,
+  draggedElement,
   draggedEntry,
-  draggedMove,
+  draggedEntryMove,
   draggedSection,
   draggedWording,
+  draggedWordingMove,
   joinElements,
   splitElements,
-  startMoveDrag,
-  startWordingDrag,
+  startElementDrag,
+  startEntryMoveDrag,
+  startWordingMoveDrag,
 } from "@/lib/placement";
 import { resumeStep, useReloadOnHistory } from "@/lib/history";
 import { cn } from "@/lib/utils";
@@ -86,9 +91,11 @@ function RemoveButton({
 // A one-line entry keeps its elements in one comma-separated string; each is shown and
 // dragged on its own, and rewriting the string is what adds, removes, or reorders one.
 function ElementRow({
+  entryIndex,
   details,
   onChange,
 }: {
+  entryIndex: number;
   details: string;
   onChange: (details: string) => void;
 }) {
@@ -109,22 +116,29 @@ function ElementRow({
           key={`${element}-${index}`}
           draggable
           onDragStart={(event) => {
-            event.dataTransfer.setData("text/x-element-index", String(index));
-            startWordingDrag(event, element);
+            event.stopPropagation();
+            startElementDrag(event, { entry: entryIndex, at: index }, element);
           }}
           onDragOver={(event) => {
+            if (!carriesElement(event) && !carriesWording(event)) return;
             event.preventDefault();
+            event.stopPropagation();
             setTarget(index);
           }}
           onDragLeave={() => setTarget(null)}
           onDrop={(event) => {
+            setTarget(null);
+            const from = draggedElement(event);
+            if (from?.entry === entryIndex) {
+              event.preventDefault();
+              event.stopPropagation();
+              return move(from.at, index);
+            }
+            const wording = draggedWording(event);
+            if (!wording) return;
             event.preventDefault();
             event.stopPropagation();
-            setTarget(null);
-            const from = Number(event.dataTransfer.getData("text/x-element-index"));
-            if (Number.isInteger(from)) return move(from, index);
-            const wording = draggedWording(event);
-            if (wording) onChange(joinElements([...elements, wording]));
+            onChange(joinElements([...elements, wording]));
           }}
           className={cn(
             "group flex cursor-grab items-center gap-1 rounded-sm border px-1.5 py-0.5 text-xs active:cursor-grabbing",
@@ -179,20 +193,22 @@ function EntryNode({
       onOpenChange={setOpen}
       className={cn("border-b", over && "bg-muted/60 ring-1 ring-ring ring-inset")}
       onDragOver={(event: React.DragEvent) => {
-        if (!carriesWording(event) && !carriesMove(event)) return;
+        if (!carriesEntryMove(event) && !carriesWording(event)) return;
         event.preventDefault();
-        event.dataTransfer.dropEffect = carriesMove(event) ? "move" : "copy";
+        event.dataTransfer.dropEffect = carriesEntryMove(event) ? "move" : "copy";
         setOver(true);
       }}
       onDragLeave={() => setOver(false)}
       onDrop={(event: React.DragEvent) => {
         setOver(false);
-        const from = draggedMove(event);
+        const from = draggedEntryMove(event);
         if (from !== null) {
           event.preventDefault();
           event.stopPropagation();
           return onMoveEntry(section, from, entry.index);
         }
+        // An element of this entry that missed every chip is a reorder that landed nowhere.
+        if (draggedElement(event)?.entry === entry.index) return;
         const text = draggedWording(event);
         if (!text) return;
         event.preventDefault();
@@ -215,7 +231,7 @@ function EntryNode({
         draggable
         onDragStart={(event: React.DragEvent) => {
           event.stopPropagation();
-          startMoveDrag(event, entry.index);
+          startEntryMoveDrag(event, entry.index);
         }}
       >
         <CollapsibleTrigger className="flex flex-1 cursor-grab items-baseline gap-1.5 py-1 pl-6 text-left hover:bg-muted/50 active:cursor-grabbing">
@@ -240,6 +256,7 @@ function EntryNode({
       <CollapsibleContent>
         {isOneLine ? (
           <ElementRow
+            entryIndex={entry.index}
             details={typeof details === "string" ? details : ""}
             onChange={(next) => onSetField(section, entry.index, "details", next)}
           />
@@ -254,22 +271,23 @@ function EntryNode({
               draggable
               onDragStart={(event) => {
                 event.stopPropagation();
-                startMoveDrag(event, at);
+                startWordingMoveDrag(event, { entry: entry.index, at });
               }}
               onDragOver={(event) => {
-                if (!carriesMove(event)) return;
+                if (!carriesWordingMove(event)) return;
                 event.preventDefault();
                 event.stopPropagation();
                 setWordingOver(at);
               }}
               onDragLeave={() => setWordingOver(null)}
               onDrop={(event) => {
-                const from = draggedMove(event);
                 setWordingOver(null);
-                if (from === null) return;
+                const from = draggedWordingMove(event);
+                // A wording reorders inside its own entry only.
+                if (from === null || from.entry !== entry.index) return;
                 event.preventDefault();
                 event.stopPropagation();
-                onMoveWording(section, entry.index, from, at);
+                onMoveWording(section, entry.index, from.at, at);
               }}
               className={cn(
                 "group flex cursor-grab gap-1.5 py-1 pr-2 pl-9 active:cursor-grabbing",

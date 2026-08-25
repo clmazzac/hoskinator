@@ -29,8 +29,7 @@ export function startEntryDrag(event: React.DragEvent, entryId: number): void {
 }
 
 export function draggedEntry(event: React.DragEvent): number | null {
-  const held = event.dataTransfer.getData(ENTRY_MIME);
-  return held ? Number(held) : null;
+  return readNumber(event.dataTransfer.getData(ENTRY_MIME));
 }
 
 export function carriesEntry(event: React.DragEvent): boolean {
@@ -50,21 +49,63 @@ export function joinElements(elements: string[]): string {
   return elements.join(", ");
 }
 
-// What a drag of something already in the resume carries: where it sits now.
-export const MOVE_MIME = "application/x-hoskinator-move";
+// What a drag of an Entry already in the resume carries: which entry of its section it is.
+export const ENTRY_MOVE_MIME = "application/x-hoskinator-entry-move";
 
-export function startMoveDrag(event: React.DragEvent, from: number): void {
-  event.dataTransfer.setData(MOVE_MIME, String(from));
+export function startEntryMoveDrag(event: React.DragEvent, from: number): void {
+  event.dataTransfer.setData(ENTRY_MOVE_MIME, String(from));
   event.dataTransfer.effectAllowed = "move";
 }
 
-export function draggedMove(event: React.DragEvent): number | null {
-  const held = event.dataTransfer.getData(MOVE_MIME);
-  return held === "" ? null : Number(held);
+export function draggedEntryMove(event: React.DragEvent): number | null {
+  return readNumber(event.dataTransfer.getData(ENTRY_MOVE_MIME));
 }
 
-export function carriesMove(event: React.DragEvent): boolean {
-  return event.dataTransfer.types.includes(MOVE_MIME);
+export function carriesEntryMove(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(ENTRY_MOVE_MIME);
+}
+
+/** A position inside one entry of a resume section. */
+export interface Spot {
+  entry: number;
+  at: number;
+}
+
+// What a drag of a wording already in the resume carries: the entry it sits in, and where in it.
+export const WORDING_MOVE_MIME = "application/x-hoskinator-wording-move";
+
+export function startWordingMoveDrag(event: React.DragEvent, spot: Spot): void {
+  event.dataTransfer.setData(WORDING_MOVE_MIME, writeSpot(spot));
+  event.dataTransfer.effectAllowed = "move";
+}
+
+export function draggedWordingMove(event: React.DragEvent): Spot | null {
+  return readSpot(event.dataTransfer.getData(WORDING_MOVE_MIME));
+}
+
+export function carriesWordingMove(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(WORDING_MOVE_MIME);
+}
+
+// What a drag of one element of a one-line entry carries: the entry it sits in, and where in it.
+// It travels as a wording as well.
+export const ELEMENT_MIME = "application/x-hoskinator-element";
+
+export function startElementDrag(
+  event: React.DragEvent,
+  spot: Spot,
+  text: string,
+): void {
+  startWordingDrag(event, text);
+  event.dataTransfer.setData(ELEMENT_MIME, writeSpot(spot));
+}
+
+export function draggedElement(event: React.DragEvent): Spot | null {
+  return readSpot(event.dataTransfer.getData(ELEMENT_MIME));
+}
+
+export function carriesElement(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(ELEMENT_MIME);
 }
 
 // What a drag of a whole Section carries: its name.
@@ -81,4 +122,23 @@ export function draggedSection(event: React.DragEvent): string | null {
 
 export function carriesSection(event: React.DragEvent): boolean {
   return event.dataTransfer.types.includes(SECTION_MIME);
+}
+
+/** Reads a number a drag carried. An absent payload reads as absent, never as zero. */
+function readNumber(held: string): number | null {
+  if (held === "") return null;
+  const value = Number(held);
+  return Number.isInteger(value) ? value : null;
+}
+
+function writeSpot(spot: Spot): string {
+  return `${spot.entry}:${spot.at}`;
+}
+
+function readSpot(held: string): Spot | null {
+  const parts = held.split(":");
+  if (parts.length !== 2) return null;
+  const entry = readNumber(parts[0]);
+  const at = readNumber(parts[1]);
+  return entry === null || at === null ? null : { entry, at };
 }
