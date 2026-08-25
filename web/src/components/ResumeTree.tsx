@@ -25,14 +25,16 @@ import {
 
 const TRUNK = ["main", "master"];
 
-interface Node {
+export interface Node {
   branch: Branch;
   children: Node[];
 }
 
 /// Groups branches by the hierarchy their names carry: trunk, archetypes, then the resumes
 /// tailored from each. A branch following no convention is listed on its own.
-function arrange(branches: Branch[]): { trunk: Branch | null; roots: Node[]; loose: Branch[] } {
+export function arrange(
+  branches: Branch[],
+): { trunk: Branch | null; roots: Node[]; loose: Branch[] } {
   const trunk = branches.find((branch) => TRUNK.includes(branch.name)) ?? null;
   const archetypes = new Map<string, Node>();
   const loose: Branch[] = [];
@@ -272,7 +274,7 @@ export default function ResumeTree({
 
   const addArchetype = () => {
     branchName(label, null)
-      .then((name) => createBranch(name, "main").then(() => checkoutBranch(name)))
+      .then((name) => createBranch(name, trunk?.name ?? "main").then(() => checkoutBranch(name)))
       .then(() => {
         setAdding(null);
         setLabel("");

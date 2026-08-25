@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderGit2, Loader2, PanelsTopLeft, UploadCloud } from "lucide-react";
+import { FolderGit2, Loader2, Moon, Plus, Sun, UploadCloud } from "lucide-react";
 
 import ApplicationTracker from "@/components/ApplicationTracker";
+import LaunchDialog from "@/components/LaunchDialog";
 import RepositorySetup from "@/components/RepositorySetup";
 import ResumeTree from "@/components/ResumeTree";
 import { Button } from "@/components/ui/button";
-import { go } from "@/lib/route";
 import { isDark, setDark } from "@/lib/theme";
+import { toCsv } from "@/lib/sheet";
 import {
   commitResume,
   listApplications,
@@ -14,10 +15,15 @@ import {
   repositoryState,
   repositoryStatus,
   workspaceStatus,
+  writeStagedFile,
   type Application,
   type Branch,
   type WorkspaceStatus,
 } from "@/rpc";
+
+/// Where the application tracker rides along in the repository, so it travels with git rather
+/// than living only in the local store.
+const APPLICATIONS_FILE = "applications.csv";
 
 export default function Home() {
   const [status, setStatus] = useState<WorkspaceStatus | null>(null);
@@ -28,6 +34,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [dark, setDarkState] = useState(isDark);
+  const [launching, setLaunching] = useState(false);
 
   const load = useCallback(() => {
     workspaceStatus().then(setStatus, () => setStatus(null));
@@ -50,9 +57,13 @@ export default function Home() {
   const saveAll = () => {
     setBusy(true);
     setNotice(null);
-    // The commit and the push fail for different reasons — a repository with no remote commits
-    // perfectly well — so a failed push must not read as a failed commit.
-    commitResume("Update resume")
+    // Mirrors the tracker into the repo alongside resume.yaml. Best-effort: a failure here
+    // (e.g. no repository yet) must not stop the resume itself from saving.
+    writeStagedFile(APPLICATIONS_FILE, toCsv(applications))
+      .catch(() => null)
+      // The commit and the push fail for different reasons — a repository with no remote commits
+      // perfectly well — so a failed push must not read as a failed commit.
+      .then(() => commitResume("Update resume"))
       .then(
         () =>
           (head ? pushBranch(head) : Promise.resolve(null)).then(
@@ -122,23 +133,24 @@ export default function Home() {
               <Button
                 size="sm"
                 className="h-7 gap-1.5 text-xs"
-                onClick={() => go("editor")}
+                onClick={() => setLaunching(true)}
               >
-                <PanelsTopLeft className="size-3.5" />
-                Open editor
+                <Plus className="size-3.5" />
+                New
               </Button>
             </>
           )}
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs"
+            className="h-7 gap-1.5 text-xs"
             onClick={() => {
               const next = !dark;
               setDark(next);
               setDarkState(next);
             }}
           >
+            {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
             {dark ? "Day" : "Night"}
           </Button>
         </div>
@@ -173,6 +185,13 @@ export default function Home() {
           </p>
         )}
       </div>
+
+      <LaunchDialog
+        open={launching}
+        onOpenChange={setLaunching}
+        branches={branches}
+        onChanged={load}
+      />
     </main>
   );
 }

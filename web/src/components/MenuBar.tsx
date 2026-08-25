@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, GitBranch, Home, Moon, Redo2, Sun, Undo2 } from "lucide-react";
+import {
+  ChevronDown,
+  FilePlus2,
+  GitBranch,
+  Home,
+  Moon,
+  Redo2,
+  Sheet,
+  Sun,
+  Undo2,
+} from "lucide-react";
 
+import NewEntryDialog from "@/components/NewEntryDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -9,19 +20,26 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   DropdownMenuCheckboxItem,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useHistory, useHistoryShortcuts } from "@/lib/history";
 import { go } from "@/lib/route";
 import { isDark, setDark } from "@/lib/theme";
 import {
+  checkoutBranch,
   repositoryState,
   resumeDesign,
   resumeThemes,
   setResumeTheme,
   setTopNote,
+  workspaceStatus,
+  type Branch,
   type Design,
 } from "@/rpc";
 
@@ -36,15 +54,34 @@ export default function MenuBar({
   const [design, setDesign] = useState<Design | null>(null);
   const [styles, setStyles] = useState<string[]>([]);
   const [branch, setBranch] = useState<string | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [sheet, setSheet] = useState<string | null>(null);
+  const [creatingEntry, setCreatingEntry] = useState(false);
 
   useEffect(() => {
     resumeThemes().then(setStyles, () => setStyles([]));
     resumeDesign().then(setDesign, () => setDesign(null));
     repositoryState().then(
-      (state) => setBranch(state.head?.branch ?? null),
-      () => setBranch(null),
+      (state) => {
+        setBranch(state.head?.branch ?? null);
+        setBranches(state.branches);
+      },
+      () => {
+        setBranch(null);
+        setBranches([]);
+      },
+    );
+    workspaceStatus().then(
+      (status) => setSheet(status.applications_sheet),
+      () => setSheet(null),
     );
   }, []);
+
+  // A full reload, not a local refresh: the outline, the render panel, and the bank all need to
+  // see the new branch's content, and none of them expose a way to be told from here.
+  const switchTo = (name: string) => {
+    checkoutBranch(name).then(() => window.location.reload());
+  };
 
   const revise = (next: Design, write: Promise<unknown>) => {
     const previous = design;
@@ -97,14 +134,60 @@ export default function MenuBar({
       </Button>
 
       {branch && (
-        <span
-          className="ml-2 flex min-w-0 items-center gap-1 text-xs text-muted-foreground"
-          title={`Editing ${branch}`}
-        >
-          <GitBranch className="size-3.5 shrink-0" />
-          <span className="max-w-64 truncate font-mono text-[11px]">{branch}</span>
-        </span>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-2 h-6 min-w-0 gap-1 px-2 text-xs font-normal"
+                title={`Editing ${branch}`}
+              >
+                <GitBranch className="size-3.5 shrink-0" />
+                <span className="max-w-64 truncate font-mono text-[11px]">{branch}</span>
+                <ChevronDown className="size-3" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start" className="min-w-56">
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger className="text-xs">
+                <GitBranch className="size-3.5" />
+                Switch resume
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-72 overflow-auto">
+                {branches
+                  .filter((candidate) => candidate.name !== branch)
+                  .map((candidate) => (
+                    <DropdownMenuItem
+                      key={candidate.name}
+                      className="font-mono text-xs"
+                      onClick={() => switchTo(candidate.name)}
+                    >
+                      {candidate.name}
+                    </DropdownMenuItem>
+                  ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem className="text-xs" onClick={() => setCreatingEntry(true)}>
+              <FilePlus2 className="size-3.5" />
+              New entry…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-xs"
+              disabled={!sheet}
+              onClick={() => {
+                if (sheet) window.open(`https://docs.google.com/spreadsheets/d/${sheet}/edit`, "_blank");
+              }}
+            >
+              <Sheet className="size-3.5" />
+              {sheet ? "Open the application sheet" : "No sheet linked"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
+      <NewEntryDialog open={creatingEntry} onOpenChange={setCreatingEntry} />
 
       <div className="flex-1" />
 
@@ -153,13 +236,13 @@ export default function MenuBar({
 
       <Button
         variant="ghost"
-        size="icon"
-        className="size-6"
+        size="sm"
+        className="h-6 gap-1 px-2 text-xs font-normal"
         onClick={toggleTheme}
-        aria-label={dark ? "Switch to day mode" : "Switch to night mode"}
         title={dark ? "Switch to day mode" : "Switch to night mode"}
       >
-        {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+        {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+        {dark ? "Day" : "Night"}
       </Button>
     </div>
   );

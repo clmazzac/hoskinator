@@ -5,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hoskinator</title>
     <script>
-      // Runs before first paint, so a reload does not flash light before React mounts.
+      // Runs before first paint, so a reload does not flash light before React mounts. The
+      // inline background is set directly, rather than left to the stylesheet, because Vite
+      // injects CSS via JS in dev — waiting for it would flash white regardless of the class.
       try {
         var saved = localStorage.getItem("hoskinator-theme");
         var dark = saved
           ? saved === "dark"
           : matchMedia("(prefers-color-scheme: dark)").matches;
         if (dark) document.documentElement.classList.add("dark");
+        document.documentElement.style.background = dark ? "#000" : "#fff";
       } catch {}
     </script>
   </head>
