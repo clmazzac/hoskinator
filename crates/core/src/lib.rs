@@ -12,6 +12,7 @@ pub mod entry;
 pub mod home;
 pub mod job_description;
 pub mod profile;
+pub mod render;
 pub mod repository;
 pub mod resume;
 pub mod search;
