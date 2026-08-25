@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Plus, X } from "lucide-react";
+import { Download, ExternalLink, Plus, Upload, X } from "lucide-react";
 
 import EditableText from "@/components/EditableText";
+import SheetImport from "@/components/SheetImport";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -10,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toCsv } from "@/lib/sheet";
 import { cn } from "@/lib/utils";
 import {
   applicationStatuses,
@@ -52,6 +54,7 @@ export default function ApplicationTracker({
 }) {
   const [statuses, setStatuses] = useState<string[]>([]);
   const [hideSettled, setHideSettled] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -119,6 +122,33 @@ export default function ApplicationTracker({
           onClick={() => setHideSettled(!hideSettled)}
         >
           {hideSettled ? "Show settled" : "Hide settled"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 text-xs"
+          onClick={() => setImporting(true)}
+        >
+          <Upload className="size-3.5" />
+          Import
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 text-xs"
+          disabled={applications.length === 0}
+          onClick={() => {
+            const csv = toCsv(applications.map(fields));
+            const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "applications.csv";
+            link.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          <Download className="size-3.5" />
+          Export
         </Button>
         <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={add}>
           <Plus className="size-3.5" />
@@ -274,6 +304,12 @@ export default function ApplicationTracker({
       {error && (
         <p className="border-t px-4 py-2 font-mono text-xs text-destructive">{error}</p>
       )}
+
+      <SheetImport
+        open={importing}
+        onOpenChange={setImporting}
+        onImported={onChanged}
+      />
     </section>
   );
 }
