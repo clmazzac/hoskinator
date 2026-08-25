@@ -150,8 +150,8 @@ export default function Home() {
             <div className="mx-auto mb-8 max-w-3xl">
               <h2 className="text-lg font-semibold">Keep every resume in one repository</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                One branch per resume. Start an archetype for a kind of role, tailor a
-                copy for each application, and move wording between them.
+                One branch per resume. Branch for a kind of role, tailor a copy for
+                each application, and move wording between them.
               </p>
             </div>
             <RepositorySetup status={status} onReady={setStatus} />

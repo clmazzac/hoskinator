@@ -147,7 +147,7 @@ function Row({
             variant="ghost"
             size="icon"
             className="size-7"
-            title="Tailor a resume from this archetype"
+            title="Branch a resume from here"
             onClick={onAdd}
           >
             <Plus className="size-3.5" />
@@ -305,7 +305,7 @@ export default function ResumeTree({
           }}
         >
           <Plus className="size-3.5" />
-          New archetype
+          New branch
         </Button>
       </header>
 
@@ -391,13 +391,6 @@ export default function ResumeTree({
             )}
           </div>
         ))}
-
-        {roots.length === 0 && (
-          <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-            No archetypes yet. Start one for a kind of role — systems programmer,
-            frontend, research — then tailor resumes from it.
-          </p>
-        )}
 
         {loose.length > 0 && (
           <>
