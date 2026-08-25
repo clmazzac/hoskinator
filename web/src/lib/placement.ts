@@ -19,3 +19,33 @@ export function draggedWording(event: React.DragEvent): string | null {
 export function carriesWording(event: React.DragEvent): boolean {
   return event.dataTransfer.types.includes(WORDING_MIME);
 }
+
+// What a drag of a whole Entry carries: the store id it came from.
+export const ENTRY_MIME = "application/x-hoskinator-entry";
+
+export function startEntryDrag(event: React.DragEvent, entryId: number): void {
+  event.dataTransfer.setData(ENTRY_MIME, String(entryId));
+  event.dataTransfer.effectAllowed = "copy";
+}
+
+export function draggedEntry(event: React.DragEvent): number | null {
+  const held = event.dataTransfer.getData(ENTRY_MIME);
+  return held ? Number(held) : null;
+}
+
+export function carriesEntry(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(ENTRY_MIME);
+}
+
+// A one-line entry holds its elements as a comma-separated string, so each element is addressed
+// by its position in that list rather than by an index the file records.
+export function splitElements(details: string): string[] {
+  return details
+    .split(",")
+    .map((element) => element.trim())
+    .filter(Boolean);
+}
+
+export function joinElements(elements: string[]): string {
+  return elements.join(", ");
+}

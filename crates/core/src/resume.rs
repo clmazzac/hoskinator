@@ -216,26 +216,11 @@ pub fn place_bullet(
     text: String,
     profile: &Profile,
 ) -> Result<(), ResumeError> {
-    let path = repository_path.join(FILENAME);
-    let current = read(repository_path)?;
-    let document = yamlpath::Document::new(current).map_err(|source| ResumeError::Parse {
-        path: path.clone(),
-        source,
-    })?;
+    let (_, document) = load(repository_path)?;
+    let entry_route = entry_route(section, entry_index);
+    require(&document, &entry_route, section, entry_index)?;
 
-    let entry_route = yamlpath::Route::default()
-        .with_key(CV_KEY)
-        .with_key(SECTIONS_KEY)
-        .with_key(section)
-        .with_key(entry_index);
-    if !document.query_exists(&entry_route) {
-        return Err(ResumeError::NoSuchEntry {
-            section: section.to_string(),
-            index: entry_index,
-        });
-    }
-
-    let highlights_route = entry_route.with_key(HIGHLIGHTS_KEY);
+    let highlights_route = entry_route.clone().with_key(HIGHLIGHTS_KEY);
     let patch = if document.query_exists(&highlights_route) {
         yamlpatch::Patch {
             route: highlights_route,
@@ -253,9 +238,189 @@ pub fn place_bullet(
         }
     };
 
-    let patched = yamlpatch::apply_yaml_patches(&document, std::slice::from_ref(&patch)).map_err(
+    apply(repository_path, &document, patch, profile)
+}
+
+/// Places an Entry's fields at the end of a section, creating the section if the resume has none.
+///
+/// Drop order is resume order: an Entry lands after the ones already placed. Its fields are copied
+/// from the Master Store, and no reference back to it is written (ADR-0001).
+pub fn place_entry(
+    repository_path: &Path,
+    section: &str,
+    fields: Value,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let (_, document) = load(repository_path)?;
+    let entry = yaml_serde::to_value(&fields).map_err(ResumeError::EncodeProfile)?;
+
+    let sections_route = yamlpath::Route::default()
+        .with_key(CV_KEY)
+        .with_key(SECTIONS_KEY);
+    let section_route = sections_route.with_key(section);
+
+    let patch = if document.query_exists(&section_route) {
+        yamlpatch::Patch {
+            route: section_route,
+            operation: yamlpatch::Op::Append { value: entry },
+        }
+    } else if document.query_exists(&sections_route) {
+        yamlpatch::Patch {
+            route: sections_route,
+            operation: yamlpatch::Op::Add {
+                key: section.to_string(),
+                value: yaml_serde::Value::Sequence(vec![entry]),
+            },
+        }
+    } else {
+        let mut sections = yaml_serde::Mapping::new();
+        sections.insert(
+            yaml_serde::Value::String(section.to_string()),
+            yaml_serde::Value::Sequence(vec![entry]),
+        );
+        yamlpatch::Patch {
+            route: yamlpath::Route::default().with_key(CV_KEY),
+            operation: yamlpatch::Op::Add {
+                key: SECTIONS_KEY.to_string(),
+                value: yaml_serde::Value::Mapping(sections),
+            },
+        }
+    };
+
+    apply(repository_path, &document, patch, profile)
+}
+
+/// Removes one entry from a section, with everything it holds.
+pub fn remove_entry(
+    repository_path: &Path,
+    section: &str,
+    entry_index: usize,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let (_, document) = load(repository_path)?;
+    let route = entry_route(section, entry_index);
+    require(&document, &route, section, entry_index)?;
+
+    apply(
+        repository_path,
+        &document,
+        yamlpatch::Patch {
+            route,
+            operation: yamlpatch::Op::Remove,
+        },
+        profile,
+    )
+}
+
+/// Removes one wording from an entry's `highlights`.
+pub fn remove_bullet(
+    repository_path: &Path,
+    section: &str,
+    entry_index: usize,
+    highlight_index: usize,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let (_, document) = load(repository_path)?;
+    let route = entry_route(section, entry_index)
+        .with_key(HIGHLIGHTS_KEY)
+        .with_key(highlight_index);
+    require(&document, &route, section, entry_index)?;
+
+    apply(
+        repository_path,
+        &document,
+        yamlpatch::Patch {
+            route,
+            operation: yamlpatch::Op::Remove,
+        },
+        profile,
+    )
+}
+
+/// Replaces one field of a resume entry, adding it when the entry has no such key.
+///
+/// The write shape a one-line entry needs: its elements live inside a single comma-separated
+/// string, so removing or reordering one rewrites the field rather than editing a list.
+///
+/// **Only sound against a block-style entry.** A section the engine created renders as a flow
+/// mapping, where a replacement value holding a comma splits the mapping into further keys. The
+/// schema check in [`write`] catches that and rejects the write, so the file is never corrupted,
+/// but the edit fails. See `docs/decisions/resume.md`.
+pub fn set_entry_field(
+    repository_path: &Path,
+    section: &str,
+    entry_index: usize,
+    key: &str,
+    value: Value,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let (_, document) = load(repository_path)?;
+    let route = entry_route(section, entry_index);
+    require(&document, &route, section, entry_index)?;
+
+    let encoded = yaml_serde::to_value(&value).map_err(ResumeError::EncodeProfile)?;
+    let field_route = route.clone().with_key(key);
+    let patch = if document.query_exists(&field_route) {
+        yamlpatch::Patch {
+            route: field_route,
+            operation: yamlpatch::Op::Replace(encoded),
+        }
+    } else {
+        yamlpatch::Patch {
+            route,
+            operation: yamlpatch::Op::Add {
+                key: key.to_string(),
+                value: encoded,
+            },
+        }
+    };
+
+    apply(repository_path, &document, patch, profile)
+}
+
+fn entry_route<'a>(section: &'a str, entry_index: usize) -> yamlpath::Route<'a> {
+    yamlpath::Route::default()
+        .with_key(CV_KEY)
+        .with_key(SECTIONS_KEY)
+        .with_key(section)
+        .with_key(entry_index)
+}
+
+fn require(
+    document: &yamlpath::Document,
+    route: &yamlpath::Route,
+    section: &str,
+    index: usize,
+) -> Result<(), ResumeError> {
+    if document.query_exists(route) {
+        return Ok(());
+    }
+    Err(ResumeError::NoSuchEntry {
+        section: section.to_string(),
+        index,
+    })
+}
+
+fn load(repository_path: &Path) -> Result<(PathBuf, yamlpath::Document), ResumeError> {
+    let path = repository_path.join(FILENAME);
+    let current = read(repository_path)?;
+    let document = yamlpath::Document::new(current).map_err(|source| ResumeError::Parse {
+        path: path.clone(),
+        source,
+    })?;
+    Ok((path, document))
+}
+
+/// Applies one patch and writes the result back through [`write`], so every edit is validated.
+fn apply(
+    repository_path: &Path,
+    document: &yamlpath::Document,
+    patch: yamlpatch::Patch,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let patched = yamlpatch::apply_yaml_patches(document, std::slice::from_ref(&patch)).map_err(
         |source| ResumeError::Patch {
-            path: path.clone(),
+            path: repository_path.join(FILENAME),
             source,
         },
     )?;
@@ -604,5 +769,126 @@ mod tests {
             ),
             Err(ResumeError::NoSuchEntry { .. })
         ));
+    }
+
+    #[test]
+    fn placing_an_entry_appends_it_to_the_section() {
+        let dir = seeded(SAMPLE);
+
+        place_entry(
+            dir.path(),
+            "Experience",
+            json!({ "company": "Quillfeather", "position": "Intern" }),
+            &populated_profile(),
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].entries.len(), 3);
+        assert_eq!(outline[0].entries[2].fields["company"], "Quillfeather");
+    }
+
+    #[test]
+    fn placing_an_entry_creates_a_section_the_resume_lacks() {
+        let dir = seeded(SAMPLE);
+
+        place_entry(
+            dir.path(),
+            "Awards",
+            json!({ "name": "Best in Show" }),
+            &populated_profile(),
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        let awards = outline.iter().find(|s| s.name == "Awards").unwrap();
+        assert_eq!(awards.entries[0].fields["name"], "Best in Show");
+    }
+
+    #[test]
+    fn drop_order_is_resume_order() {
+        let dir = seeded("cv:\n  name: Someone\n");
+        let profile = populated_profile();
+
+        for company in ["First", "Second", "Third"] {
+            place_entry(
+                dir.path(),
+                "Experience",
+                json!({ "company": company, "position": "Engineer" }),
+                &profile,
+            )
+            .unwrap();
+        }
+
+        let placed: Vec<String> = outline(dir.path()).unwrap()[0]
+            .entries
+            .iter()
+            .map(|entry| entry.fields["company"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(placed, ["First", "Second", "Third"]);
+    }
+
+    #[test]
+    fn removing_an_entry_takes_only_that_entry() {
+        let dir = seeded(SAMPLE);
+
+        remove_entry(dir.path(), "Experience", 0, &populated_profile()).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].entries.len(), 1);
+        assert_eq!(outline[0].entries[0].fields["company"], "Ravensmoor");
+    }
+
+    #[test]
+    fn removing_a_wording_leaves_the_entry() {
+        let dir = seeded(SAMPLE);
+
+        remove_bullet(dir.path(), "Experience", 0, 0, &populated_profile()).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].entries[0].highlights, Vec::<String>::new());
+        assert_eq!(outline[0].entries[0].fields["company"], "Helio");
+    }
+
+    #[test]
+    fn removing_keeps_the_rest_of_the_document() {
+        let dir = seeded(SAMPLE);
+
+        remove_bullet(dir.path(), "Experience", 0, 0, &populated_profile()).unwrap();
+
+        let written = read(dir.path()).unwrap();
+        assert!(written.contains("# kept"));
+        assert!(written.contains("company: Ravensmoor"));
+    }
+
+    #[test]
+    fn removing_an_entry_that_is_not_there_is_rejected() {
+        let dir = seeded(SAMPLE);
+
+        assert!(matches!(
+            remove_entry(dir.path(), "Experience", 9, &populated_profile()),
+            Err(ResumeError::NoSuchEntry { .. })
+        ));
+    }
+
+    #[test]
+    fn setting_a_field_rewrites_it_in_place() {
+        let dir = seeded(
+            "cv:\n  sections:\n    Skills:\n      - label: Languages\n        details: Rust, Go\n",
+        );
+
+        set_entry_field(
+            dir.path(),
+            "Skills",
+            0,
+            "details",
+            json!("Go, Rust, Python"),
+            &populated_profile(),
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].entries[0].fields["details"], "Go, Rust, Python");
+        assert_eq!(outline[0].entries[0].fields["label"], "Languages");
     }
 }

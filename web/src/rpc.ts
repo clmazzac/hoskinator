@@ -273,3 +273,31 @@ export function placeBullet(
 ): Promise<null> {
   return call<null>("resume.place_bullet", [section, entryIndex, text]);
 }
+
+export function placeEntry(section: string, fields: unknown): Promise<null> {
+  return call<null>("resume.place_entry", [section, fields]);
+}
+
+export function removeResumeEntry(
+  section: string,
+  entryIndex: number,
+): Promise<null> {
+  return call<null>("resume.remove_entry", [section, entryIndex]);
+}
+
+export function removeResumeBullet(
+  section: string,
+  entryIndex: number,
+  highlightIndex: number,
+): Promise<null> {
+  return call<null>("resume.remove_bullet", [section, entryIndex, highlightIndex]);
+}
+
+export function setResumeEntryField(
+  section: string,
+  entryIndex: number,
+  key: string,
+  value: unknown,
+): Promise<null> {
+  return call<null>("resume.set_entry_field", [section, entryIndex, key, value]);
+}

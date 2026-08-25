@@ -224,6 +224,30 @@ pub trait ResumeRpc {
         entry_index: usize,
         text: String,
     ) -> RpcResult<()>;
+
+    #[method(name = "resume.place_entry")]
+    async fn resume_place_entry(&self, section: String, fields: serde_json::Value)
+    -> RpcResult<()>;
+
+    #[method(name = "resume.remove_entry")]
+    async fn resume_remove_entry(&self, section: String, entry_index: usize) -> RpcResult<()>;
+
+    #[method(name = "resume.set_entry_field")]
+    async fn resume_set_entry_field(
+        &self,
+        section: String,
+        entry_index: usize,
+        key: String,
+        value: serde_json::Value,
+    ) -> RpcResult<()>;
+
+    #[method(name = "resume.remove_bullet")]
+    async fn resume_remove_bullet(
+        &self,
+        section: String,
+        entry_index: usize,
+        highlight_index: usize,
+    ) -> RpcResult<()>;
 }
 
 /// Serves the Profile methods from one store.
@@ -476,6 +500,53 @@ impl ResumeRpcServer for ResumeApi {
         let profile = self.store.profile().await.map_err(store_rpc_error)?;
         self.operation(move || resume::place_bullet(&path, &section, entry_index, text, &profile))
             .await
+    }
+
+    async fn resume_place_entry(
+        &self,
+        section: String,
+        fields: serde_json::Value,
+    ) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::place_entry(&path, &section, fields, &profile))
+            .await
+    }
+
+    async fn resume_remove_entry(&self, section: String, entry_index: usize) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::remove_entry(&path, &section, entry_index, &profile))
+            .await
+    }
+
+    async fn resume_set_entry_field(
+        &self,
+        section: String,
+        entry_index: usize,
+        key: String,
+        value: serde_json::Value,
+    ) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || {
+            resume::set_entry_field(&path, &section, entry_index, &key, value, &profile)
+        })
+        .await
+    }
+
+    async fn resume_remove_bullet(
+        &self,
+        section: String,
+        entry_index: usize,
+        highlight_index: usize,
+    ) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || {
+            resume::remove_bullet(&path, &section, entry_index, highlight_index, &profile)
+        })
+        .await
     }
 }
 

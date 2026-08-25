@@ -75,3 +75,28 @@ does not carry the fix, so the alternatives were this or a workaround that damag
 
 **Guarded by** `writing_twice_keeps_a_sequence_valued_profile_field_intact`, which writes, reads
 back, and writes again — the sequence the bug needed.
+
+## The write surface is one patch operation per gesture (Slice 9, #10)
+
+`resume.place_entry`, `resume.place_bullet`, `resume.remove_entry`, `resume.remove_bullet`, and
+`resume.set_entry_field`. Each is one `yamlpatch` operation, and each goes back out through
+`resume.write`, so every edit is schema-validated before it reaches disk.
+
+`resume.outline` reads `cv.sections` as structure beside the raw `resume.read`, because a column
+that shows sections and entries cannot reconstruct them from text it never parsed. It walks YAML
+rather than JSON: `yaml_serde::Mapping` keeps insertion order and `serde_json::Map` sorts, and a
+resume's sections render in the order the file lists them.
+
+**Placement is one-way and appends.** Drop order is resume order. Nothing is matched against the
+Master Store, deduplicated, or reconciled, and placing an Entry copies its fields without writing a
+reference back (ADR-0001).
+
+**Known limitation: `set_entry_field` is only sound against a block-style entry.** When
+`place_entry` creates a section the resume did not have, `yamlpatch` renders it as a flow mapping.
+Replacing a field inside a flow mapping with a value holding a comma splits the mapping into further
+keys. The schema check in `write` catches this and rejects it, so the file is never corrupted, but
+the edit fails. Entries appended to a section that already exists are block style and unaffected.
+
+Replacing the whole entry instead was tried and is worse: `yamlpatch::Op::Replace` mis-indents a
+mapping at a sequence position, leaking the entry's keys up into `cv:`. The fix belongs upstream, or
+in emitting block style when a section is created.

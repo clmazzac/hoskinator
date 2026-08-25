@@ -7,7 +7,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { carriesBullets, entryLabel } from "@/entryFields";
-import { startWordingDrag } from "@/lib/placement";
+import { startEntryDrag, startWordingDrag } from "@/lib/placement";
 import {
   eligibleEntries,
   listBullets,
@@ -121,8 +121,10 @@ function EntryNode({ entry }: { entry: Entry }) {
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger
-        className="group flex w-full items-baseline gap-1.5 py-1 pr-2 pl-6 text-left hover:bg-muted/50"
+        className="group flex w-full cursor-grab items-baseline gap-1.5 py-1 pr-2 pl-6 text-left hover:bg-muted/50 active:cursor-grabbing"
         disabled={!hasBullets}
+        draggable
+        onDragStart={(event: React.DragEvent) => startEntryDrag(event, entry.id)}
       >
         {hasBullets ? <Chevron /> : <span className="size-3.5 shrink-0" />}
         <span className="truncate text-xs font-medium">{title}</span>
