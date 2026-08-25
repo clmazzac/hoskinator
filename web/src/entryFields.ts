@@ -75,3 +75,46 @@ export function readFields(entryType: string, fields: unknown): Record<string, s
   }
   return values;
 }
+
+/** Entry types whose entries hold accomplishments as Bullets. */
+export const BULLET_TYPES = ["normal", "experience", "education"] as const;
+
+export function carriesBullets(entryType: string): boolean {
+  return (BULLET_TYPES as readonly string[]).includes(entryType);
+}
+
+/** The fields each entry type is titled and subtitled by, in that order. */
+const LABEL_FIELDS: Record<string, readonly [string, string | null]> = {
+  "one-line": ["label", "details"],
+  "normal": ["name", "summary"],
+  "experience": ["company", "position"],
+  "education": ["institution", "degree"],
+  "publication": ["title", "journal"],
+  "bullet": ["bullet", null],
+  "numbered": ["number", null],
+  "reversed-numbered": ["reversed_number", null],
+};
+
+/** How an entry names itself in a list: a title, a subtitle, and a date range. */
+export function entryLabel(entryType: string, fields: unknown): {
+  title: string;
+  subtitle: string;
+  dates: string;
+} {
+  if (entryType === "text" || typeof fields !== "object" || fields === null) {
+    return { title: String(fields ?? ""), subtitle: "", dates: "" };
+  }
+
+  const held = fields as Record<string, unknown>;
+  const read = (name: string | null) =>
+    name && held[name] !== undefined && held[name] !== null ? String(held[name]) : "";
+
+  const [titleField, subtitleField] = LABEL_FIELDS[entryType] ?? ["name", null];
+  const span = [read("start_date"), read("end_date")].filter(Boolean).join("–");
+
+  return {
+    title: read(titleField) || "(untitled)",
+    subtitle: read(subtitleField),
+    dates: read("date") || span,
+  };
+}

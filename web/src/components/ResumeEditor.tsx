@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { PanelRightOpen } from "lucide-react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 
+import MasterStore from "@/components/MasterStore";
 import MenuBar from "@/components/MenuBar";
 import RenderToolbar from "@/components/RenderToolbar";
 import { Button } from "@/components/ui/button";
@@ -54,12 +55,12 @@ export default function ResumeEditor() {
         >
           <ResizablePanel id="store" defaultSize="28" minSize={MIN_PANEL_SIZE}>
             <Column>
-              <Unbuilt>Bullets you select to use in this resume.</Unbuilt>
+              <MasterStore />
             </Column>
           </ResizablePanel>
-  
+
           <ResizableHandle withHandle />
-  
+
           <ResizablePanel id="resume" defaultSize="28" minSize={MIN_PANEL_SIZE}>
             <Column>
               <Unbuilt>
@@ -67,12 +68,12 @@ export default function ResumeEditor() {
               </Unbuilt>
             </Column>
           </ResizablePanel>
-  
+
           <ResizableHandle
             withHandle
             className={cn(renderCollapsed && "hidden")}
           />
-  
+
           <ResizablePanel
             id="render"
             defaultSize="44"
@@ -90,7 +91,7 @@ export default function ResumeEditor() {
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
-  
+
         {renderCollapsed && (
           <div className="flex w-9 shrink-0 flex-col items-center border-l pt-1.5">
             <Button
