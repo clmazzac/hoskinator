@@ -13,7 +13,7 @@ use hoskinator_core::repository::{
     Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, RepositoryDiff,
     RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus, ResumeRepository,
 };
-use hoskinator_core::resume::{self, ResumeError};
+use hoskinator_core::resume::{self, ResumeError, ResumeSection};
 use hoskinator_core::search::SearchHit;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
@@ -59,6 +59,8 @@ pub const RESUME_NOT_FOUND: i32 = -32017;
 pub const RESUME_IO: i32 = -32018;
 /// Writing resume.yaml would not validate against rendercv's schema.
 pub const RESUME_INVALID: i32 = -32019;
+/// The resume section has no entry at the index a placement named.
+pub const RESUME_NO_SUCH_ENTRY: i32 = -32020;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -211,6 +213,17 @@ pub trait ResumeRpc {
 
     #[method(name = "resume.write")]
     async fn resume_write(&self, text: String) -> RpcResult<()>;
+
+    #[method(name = "resume.outline")]
+    async fn resume_outline(&self) -> RpcResult<Vec<ResumeSection>>;
+
+    #[method(name = "resume.place_bullet")]
+    async fn resume_place_bullet(
+        &self,
+        section: String,
+        entry_index: usize,
+        text: String,
+    ) -> RpcResult<()>;
 }
 
 /// Serves the Profile methods from one store.
@@ -447,6 +460,23 @@ impl ResumeRpcServer for ResumeApi {
         self.operation(move || resume::write(&path, text, &profile))
             .await
     }
+
+    async fn resume_outline(&self) -> RpcResult<Vec<ResumeSection>> {
+        let path = self.repository_path()?;
+        self.operation(move || resume::outline(&path)).await
+    }
+
+    async fn resume_place_bullet(
+        &self,
+        section: String,
+        entry_index: usize,
+        text: String,
+    ) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::place_bullet(&path, &section, entry_index, text, &profile))
+            .await
+    }
 }
 
 #[async_trait]
@@ -667,6 +697,7 @@ fn resume_code_for(error: &ResumeError) -> i32 {
     match error {
         ResumeError::NotFound { .. } => RESUME_NOT_FOUND,
         ResumeError::Invalid(_) => RESUME_INVALID,
+        ResumeError::NoSuchEntry { .. } => RESUME_NO_SUCH_ENTRY,
         ResumeError::Read { .. }
         | ResumeError::Write { .. }
         | ResumeError::Parse { .. }

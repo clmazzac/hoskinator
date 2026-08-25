@@ -14,6 +14,12 @@ pub const FILENAME: &str = "resume.yaml";
 /// The document key the Profile is injected under (rendercv's `cv:` header).
 const CV_KEY: &str = "cv";
 
+/// The `cv:` key holding the resume's sections.
+const SECTIONS_KEY: &str = "sections";
+
+/// The entry key holding an entry's placed wordings.
+const HIGHLIGHTS_KEY: &str = "highlights";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeError {
     #[error("no resume.yaml at {path}")]
@@ -52,6 +58,8 @@ pub enum ResumeError {
     },
     #[error("the resulting resume.yaml would not validate against rendercv's schema: {0:?}")]
     Invalid(Vec<String>),
+    #[error("section {section} has no entry at index {index}")]
+    NoSuchEntry { section: String, index: usize },
 }
 
 /// Reads the raw text of `resume.yaml` from a repository's working directory.
@@ -107,6 +115,152 @@ pub fn write(repository_path: &Path, text: String, profile: &Profile) -> Result<
     validate(&as_json).map_err(ResumeError::Invalid)?;
 
     std::fs::write(&path, patched.source()).map_err(|source| ResumeError::Write { path, source })
+}
+
+/// One entry of a resume section, at the position it sits in the file.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResumeEntry {
+    /// Where the entry sits in its section's list, and how a write addresses it.
+    pub index: usize,
+    /// The entry's own keys, as rendercv holds them, minus `highlights`.
+    pub fields: Value,
+    /// The wordings placed on this entry.
+    pub highlights: Vec<String>,
+}
+
+/// One section of a resume, named as the file names it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResumeSection {
+    pub name: String,
+    pub entries: Vec<ResumeEntry>,
+}
+
+/// The `cv.sections` key, read as structure rather than text.
+///
+/// Sections a human wrote by hand appear alongside ones the engine placed; the file is the only
+/// record of what a resume holds (ADR-0001).
+pub fn outline(repository_path: &Path) -> Result<Vec<ResumeSection>, ResumeError> {
+    let path = repository_path.join(FILENAME);
+    let text = read(repository_path)?;
+    // Walked as YAML rather than JSON: `yaml_serde::Mapping` keeps insertion order, and a
+    // resume's sections render in the order the file lists them.
+    let document: yaml_serde::Value =
+        yaml_serde::from_str(&text).map_err(|source| ResumeError::Decode { path, source })?;
+
+    let Some(sections) = document
+        .get(CV_KEY)
+        .and_then(|cv| cv.get(SECTIONS_KEY))
+        .and_then(|sections| sections.as_mapping())
+    else {
+        return Ok(Vec::new());
+    };
+
+    Ok(sections
+        .iter()
+        .filter_map(|(name, entries)| {
+            Some(ResumeSection {
+                name: name.as_str()?.to_string(),
+                entries: entries
+                    .as_sequence()
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .enumerate()
+                            .map(|(index, entry)| read_entry(index, entry))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+        })
+        .collect())
+}
+
+fn read_entry(index: usize, entry: &yaml_serde::Value) -> ResumeEntry {
+    let highlights = entry
+        .get(HIGHLIGHTS_KEY)
+        .and_then(|value| value.as_sequence())
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| match item.as_str() {
+                    Some(text) => text.to_string(),
+                    None => yaml_serde::to_string(item)
+                        .unwrap_or_default()
+                        .trim()
+                        .into(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut fields = entry.clone();
+    if let Some(mapping) = fields.as_mapping_mut() {
+        mapping.remove(HIGHLIGHTS_KEY);
+    }
+
+    ResumeEntry {
+        index,
+        fields: serde_json::to_value(&fields).unwrap_or(Value::Null),
+        highlights,
+    }
+}
+
+/// Appends one wording to an entry's `highlights`, creating the list if the entry has none.
+///
+/// Writes only the wording given. Nothing is matched against the Master Store, deduplicated, or
+/// reconciled (ADR-0001) — placing a wording already present adds it again.
+pub fn place_bullet(
+    repository_path: &Path,
+    section: &str,
+    entry_index: usize,
+    text: String,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let path = repository_path.join(FILENAME);
+    let current = read(repository_path)?;
+    let document = yamlpath::Document::new(current).map_err(|source| ResumeError::Parse {
+        path: path.clone(),
+        source,
+    })?;
+
+    let entry_route = yamlpath::Route::default()
+        .with_key(CV_KEY)
+        .with_key(SECTIONS_KEY)
+        .with_key(section)
+        .with_key(entry_index);
+    if !document.query_exists(&entry_route) {
+        return Err(ResumeError::NoSuchEntry {
+            section: section.to_string(),
+            index: entry_index,
+        });
+    }
+
+    let highlights_route = entry_route.with_key(HIGHLIGHTS_KEY);
+    let patch = if document.query_exists(&highlights_route) {
+        yamlpatch::Patch {
+            route: highlights_route,
+            operation: yamlpatch::Op::Append {
+                value: yaml_serde::Value::String(text),
+            },
+        }
+    } else {
+        yamlpatch::Patch {
+            route: entry_route,
+            operation: yamlpatch::Op::Add {
+                key: HIGHLIGHTS_KEY.to_string(),
+                value: yaml_serde::Value::Sequence(vec![yaml_serde::Value::String(text)]),
+            },
+        }
+    };
+
+    let patched = yamlpatch::apply_yaml_patches(&document, std::slice::from_ref(&patch)).map_err(
+        |source| ResumeError::Patch {
+            path: path.clone(),
+            source,
+        },
+    )?;
+
+    write(repository_path, patched.source().to_string(), profile)
 }
 
 /// The Profile's fields the way rendercv expects them, with unset fields left out.
@@ -306,5 +460,149 @@ mod tests {
         let document: Value = yaml_serde::from_str(&twice).unwrap();
         assert_eq!(document["cv"]["social_networks"][0]["username"], "ada");
         assert_eq!(validate(&document), Ok(()));
+    }
+
+    const SAMPLE: &str = "cv:\n  name: Someone\n  sections:\n    # kept\n    Experience:\n      - company: Helio\n        position: Engineer\n        highlights:\n          - Did a thing.\n      - company: Ravensmoor\n        position: Engineer\n";
+
+    fn seeded(text: &str) -> TempDir {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(FILENAME), text).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_outline_reads_sections_entries_and_highlights() {
+        let dir = seeded(SAMPLE);
+
+        let outline = outline(dir.path()).unwrap();
+
+        assert_eq!(outline.len(), 1);
+        assert_eq!(outline[0].name, "Experience");
+        assert_eq!(outline[0].entries.len(), 2);
+        assert_eq!(outline[0].entries[0].index, 0);
+        assert_eq!(outline[0].entries[0].highlights, ["Did a thing."]);
+        assert_eq!(outline[0].entries[1].highlights, Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_outline_keeps_highlights_out_of_the_fields() {
+        let dir = seeded(SAMPLE);
+
+        let outline = outline(dir.path()).unwrap();
+
+        assert_eq!(outline[0].entries[0].fields["company"], "Helio");
+        assert!(outline[0].entries[0].fields.get("highlights").is_none());
+    }
+
+    #[test]
+    fn the_outline_keeps_the_files_section_order() {
+        let dir = seeded(
+            "cv:\n  sections:\n    Experience:\n      - company: A\n    Education:\n      - institution: B\n    Awards:\n      - name: C\n",
+        );
+
+        let names: Vec<String> = outline(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|section| section.name)
+            .collect();
+
+        assert_eq!(names, ["Experience", "Education", "Awards"]);
+    }
+
+    #[test]
+    fn a_document_with_no_sections_has_an_empty_outline() {
+        let dir = seeded("cv:\n  name: Someone\n");
+
+        assert_eq!(outline(dir.path()).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn placing_appends_to_an_existing_highlights_list() {
+        let dir = seeded(SAMPLE);
+
+        place_bullet(
+            dir.path(),
+            "Experience",
+            0,
+            "Did another.".into(),
+            &populated_profile(),
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(
+            outline[0].entries[0].highlights,
+            ["Did a thing.", "Did another."]
+        );
+    }
+
+    #[test]
+    fn placing_creates_a_highlights_list_when_the_entry_has_none() {
+        let dir = seeded(SAMPLE);
+
+        place_bullet(
+            dir.path(),
+            "Experience",
+            1,
+            "First one.".into(),
+            &populated_profile(),
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].entries[1].highlights, ["First one."]);
+    }
+
+    #[test]
+    fn placing_the_same_wording_twice_adds_it_twice() {
+        let dir = seeded(SAMPLE);
+        let profile = populated_profile();
+
+        place_bullet(dir.path(), "Experience", 0, "Repeated.".into(), &profile).unwrap();
+        place_bullet(dir.path(), "Experience", 0, "Repeated.".into(), &profile).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(
+            outline[0].entries[0]
+                .highlights
+                .iter()
+                .filter(|h| *h == "Repeated.")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn placing_leaves_the_rest_of_the_document_alone() {
+        let dir = seeded(SAMPLE);
+
+        place_bullet(
+            dir.path(),
+            "Experience",
+            0,
+            "Did another.".into(),
+            &populated_profile(),
+        )
+        .unwrap();
+
+        let written = read(dir.path()).unwrap();
+        assert!(written.contains("# kept"));
+        assert!(written.contains("company: Ravensmoor"));
+    }
+
+    #[test]
+    fn placing_into_a_missing_entry_is_rejected() {
+        let dir = seeded(SAMPLE);
+
+        assert!(matches!(
+            place_bullet(
+                dir.path(),
+                "Experience",
+                9,
+                "Nope.".into(),
+                &populated_profile()
+            ),
+            Err(ResumeError::NoSuchEntry { .. })
+        ));
     }
 }
