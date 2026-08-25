@@ -229,6 +229,9 @@ pub trait ResumeRpc {
     async fn resume_place_entry(&self, section: String, fields: serde_json::Value)
     -> RpcResult<()>;
 
+    #[method(name = "resume.place_section")]
+    async fn resume_place_section(&self, section: String) -> RpcResult<()>;
+
     #[method(name = "resume.remove_entry")]
     async fn resume_remove_entry(&self, section: String, entry_index: usize) -> RpcResult<()>;
 
@@ -522,6 +525,13 @@ impl ResumeRpcServer for ResumeApi {
         let path = self.repository_path()?;
         let profile = self.store.profile().await.map_err(store_rpc_error)?;
         self.operation(move || resume::place_entry(&path, &section, fields, &profile))
+            .await
+    }
+
+    async fn resume_place_section(&self, section: String) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::place_section(&path, &section, &profile))
             .await
     }
 

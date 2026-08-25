@@ -66,3 +66,19 @@ export function draggedMove(event: React.DragEvent): number | null {
 export function carriesMove(event: React.DragEvent): boolean {
   return event.dataTransfer.types.includes(MOVE_MIME);
 }
+
+// What a drag of a whole Section carries: its name.
+export const SECTION_MIME = "application/x-hoskinator-section";
+
+export function startSectionDrag(event: React.DragEvent, name: string): void {
+  event.dataTransfer.setData(SECTION_MIME, name);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
+export function draggedSection(event: React.DragEvent): string | null {
+  return event.dataTransfer.getData(SECTION_MIME) || null;
+}
+
+export function carriesSection(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(SECTION_MIME);
+}

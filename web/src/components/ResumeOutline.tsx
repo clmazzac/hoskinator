@@ -10,9 +10,11 @@ import { entryLabel } from "@/entryFields";
 import {
   carriesEntry,
   carriesMove,
+  carriesSection,
   carriesWording,
   draggedEntry,
   draggedMove,
+  draggedSection,
   draggedWording,
   joinElements,
   splitElements,
@@ -27,6 +29,7 @@ import {
   removeResumeBullet,
   moveResumeBullet,
   moveResumeEntry,
+  placeSection,
   removeResumeEntry,
   resumeOutline,
   setResumeEntryField,
@@ -320,10 +323,25 @@ export default function ResumeOutline() {
 
   if (error) return <Note>{error}</Note>;
   if (!sections) return <Note>Loading…</Note>;
-  if (sections.length === 0) return <Note>This resume has no sections.</Note>;
 
   return (
-    <div>
+    <div
+      className="min-h-full"
+      onDragOver={(event) => {
+        if (!carriesSection(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(event) => {
+        const name = draggedSection(event);
+        if (!name) return;
+        event.preventDefault();
+        run(placeSection(name));
+      }}
+    >
+      {sections.length === 0 && (
+        <Note>Drag a Section across to start this resume.</Note>
+      )}
       {sections.map((section) => (
         <div
           key={section.name}

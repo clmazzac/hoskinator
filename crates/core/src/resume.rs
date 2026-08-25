@@ -301,6 +301,49 @@ pub fn place_entry(
     apply(repository_path, &document, &[create, as_block], profile)
 }
 
+/// Adds an empty section to the resume, leaving one that already exists alone.
+///
+/// A section placed on its own gives Entries somewhere to land and fixes where it sits in the
+/// order. rendercv accepts an empty section.
+pub fn place_section(
+    repository_path: &Path,
+    section: &str,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let (_, document) = load(repository_path)?;
+
+    let sections_route = yamlpath::Route::default()
+        .with_key(CV_KEY)
+        .with_key(SECTIONS_KEY);
+    let section_route = sections_route.with_key(section);
+    if document.query_exists(&section_route) {
+        return Ok(());
+    }
+
+    let empty = yaml_serde::Value::Sequence(Vec::new());
+    let patch = if document.query_exists(&sections_route) {
+        yamlpatch::Patch {
+            route: sections_route,
+            operation: yamlpatch::Op::Add {
+                key: section.to_string(),
+                value: empty,
+            },
+        }
+    } else {
+        let mut sections = yaml_serde::Mapping::new();
+        sections.insert(yaml_serde::Value::String(section.to_string()), empty);
+        yamlpatch::Patch {
+            route: yamlpath::Route::default().with_key(CV_KEY),
+            operation: yamlpatch::Op::Add {
+                key: SECTIONS_KEY.to_string(),
+                value: yaml_serde::Value::Mapping(sections),
+            },
+        }
+    };
+
+    apply(repository_path, &document, &[patch], profile)
+}
+
 /// Removes one entry from a section, with everything it holds.
 pub fn remove_entry(
     repository_path: &Path,

@@ -318,3 +318,7 @@ export function moveResumeBullet(
 ): Promise<null> {
   return call<null>("resume.move_bullet", [section, entryIndex, from, to]);
 }
+
+export function placeSection(section: string): Promise<null> {
+  return call<null>("resume.place_section", [section]);
+}
