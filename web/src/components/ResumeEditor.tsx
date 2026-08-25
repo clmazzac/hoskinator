@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { PanelRightOpen } from "lucide-react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 
+import MenuBar from "@/components/MenuBar";
 import RenderToolbar from "@/components/RenderToolbar";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,66 +43,69 @@ export default function ResumeEditor() {
   });
 
   return (
-    <div className="flex h-dvh bg-background text-foreground">
-      <ResizablePanelGroup
-        id={LAYOUT_ID}
-        defaultLayout={defaultLayout}
-        onLayoutChanged={onLayoutChanged}
-        className="min-w-0 flex-1"
-      >
-        <ResizablePanel id="store" defaultSize="28" minSize={MIN_PANEL_SIZE}>
-          <Column>
-            <Unbuilt>Bullets you select to use in this resume.</Unbuilt>
-          </Column>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel id="resume" defaultSize="28" minSize={MIN_PANEL_SIZE}>
-          <Column>
-            <Unbuilt>
-              The Bullets and elements in use, by part of the resume.
-            </Unbuilt>
-          </Column>
-        </ResizablePanel>
-
-        <ResizableHandle
-          withHandle
-          className={cn(renderCollapsed && "hidden")}
-        />
-
-        <ResizablePanel
-          id="render"
-          defaultSize="44"
-          minSize={MIN_PANEL_SIZE}
-          collapsible
-          collapsedSize={0}
-          panelRef={renderPanel}
-          onResize={(size) => setRenderCollapsed(size.asPercentage === 0)}
+    <div className="flex h-dvh flex-col bg-background text-foreground">
+      <MenuBar />
+      <div className="flex min-h-0 flex-1">
+        <ResizablePanelGroup
+          id={LAYOUT_ID}
+          defaultLayout={defaultLayout}
+          onLayoutChanged={onLayoutChanged}
+          className="min-w-0 flex-1"
         >
-          <div className="flex h-full min-w-0 flex-col">
-            <RenderToolbar onCollapse={() => renderPanel.current?.collapse()} />
-            <ScrollArea className="min-h-0 flex-1">
-              <Unbuilt>The rendercv output for the current branch.</Unbuilt>
-            </ScrollArea>
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-
-      {renderCollapsed && (
-        <div className="flex w-9 shrink-0 flex-col items-center border-l pt-1.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={() => renderPanel.current?.expand()}
-            aria-label="Show the rendered resume"
-            title="Show the rendered resume"
+          <ResizablePanel id="store" defaultSize="28" minSize={MIN_PANEL_SIZE}>
+            <Column>
+              <Unbuilt>Bullets you select to use in this resume.</Unbuilt>
+            </Column>
+          </ResizablePanel>
+  
+          <ResizableHandle withHandle />
+  
+          <ResizablePanel id="resume" defaultSize="28" minSize={MIN_PANEL_SIZE}>
+            <Column>
+              <Unbuilt>
+                The Bullets and elements in use, by part of the resume.
+              </Unbuilt>
+            </Column>
+          </ResizablePanel>
+  
+          <ResizableHandle
+            withHandle
+            className={cn(renderCollapsed && "hidden")}
+          />
+  
+          <ResizablePanel
+            id="render"
+            defaultSize="44"
+            minSize={MIN_PANEL_SIZE}
+            collapsible
+            collapsedSize={0}
+            panelRef={renderPanel}
+            onResize={(size) => setRenderCollapsed(size.asPercentage === 0)}
           >
-            <PanelRightOpen className="size-4" />
-          </Button>
-        </div>
-      )}
+            <div className="flex h-full min-w-0 flex-col">
+              <RenderToolbar onCollapse={() => renderPanel.current?.collapse()} />
+              <ScrollArea className="min-h-0 flex-1">
+                <Unbuilt>The rendercv output for the current branch.</Unbuilt>
+              </ScrollArea>
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+  
+        {renderCollapsed && (
+          <div className="flex w-9 shrink-0 flex-col items-center border-l pt-1.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={() => renderPanel.current?.expand()}
+              aria-label="Show the rendered resume"
+              title="Show the rendered resume"
+            >
+              <PanelRightOpen className="size-4" />
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
