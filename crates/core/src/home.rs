@@ -126,7 +126,7 @@ fn platform_data_dir() -> Option<PathBuf> {
 }
 
 /// The configuration file path, if the OS provides a configuration directory.
-fn config_file_path() -> Option<PathBuf> {
+pub fn config_file_path() -> Option<PathBuf> {
     project_dirs().map(|dirs| dirs.config_dir().join(CONFIG_FILE))
 }
 

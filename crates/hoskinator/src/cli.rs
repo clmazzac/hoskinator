@@ -77,7 +77,7 @@ pub async fn repository_init(port: u16) -> Result<(), CliError> {
 pub async fn repository_branch(port: u16, name: String) -> Result<(), CliError> {
     render(
         client(port)?
-            .repository_branch_create(CreateBranchRequest { name })
+            .repository_branch_create(CreateBranchRequest { name, from: None })
             .await
             .map_err(|source| classify(source, port))?,
     )

@@ -17,10 +17,11 @@ use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
 use crate::rpc::{
-    BulletApi, BulletRpcServer, EntryApi, EntryRpcServer, JobDescriptionApi,
-    JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RenderApi, RenderRpcServer,
-    RepositoryApi, RepositoryRpcServer, ResumeApi, ResumeRepositoryProvider, ResumeRpcServer,
-    SearchApi, SearchRpcServer, SectionApi, SectionRpcServer,
+    ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi, EntryRpcServer,
+    JobDescriptionApi, JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RenderApi,
+    RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi, ResumeRepositoryProvider,
+    ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer, WorkspaceApi,
+    WorkspaceRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
@@ -86,8 +87,10 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(Arc::clone(&store)).into_rpc())?;
-    module.merge(ResumeApi::new(store, resume_repo.clone()).into_rpc())?;
+    module.merge(ResumeApi::new(Arc::clone(&store), resume_repo.clone()).into_rpc())?;
     module.merge(RenderApi::new(resume_repo.clone()).into_rpc())?;
+    module.merge(ApplicationApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(WorkspaceApi::new(resume_repo.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
     Ok(Router::new()

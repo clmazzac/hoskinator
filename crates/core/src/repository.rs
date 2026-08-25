@@ -55,11 +55,26 @@ pub struct Branch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateBranchRequest {
     pub name: String,
+    /// The branch it starts from. HEAD when absent.
+    #[serde(default)]
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckoutRequest {
     pub branch: String,
+}
+
+/// What a merge did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeOutcome {
+    /// The branch merged into.
+    pub branch: String,
+    /// The branch merged from.
+    pub from: String,
+    /// One of `already-current`, `fast-forward`, or `merged`.
+    pub kind: String,
+    pub commit_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,8 +225,19 @@ impl ResumeRepository {
                 message: "branch already exists".into(),
             });
         }
-        let head = self.local_head()?;
-        let commit = head.peel_to_commit().map_err(|_| precondition_error())?;
+        let commit = match &request.from {
+            Some(from) => self
+                .repository
+                .find_branch(from, BranchType::Local)
+                .map_err(|_| RepositoryError::NotFound { name: from.clone() })?
+                .get()
+                .peel_to_commit()
+                .map_err(|_| precondition_error())?,
+            None => {
+                let head = self.local_head()?;
+                head.peel_to_commit().map_err(|_| precondition_error())?
+            }
+        };
         self.repository
             .branch(&request.name, &commit, false)
             .map_err(RepositoryError::Operation)?;
@@ -471,6 +497,131 @@ impl ResumeRepository {
         })
     }
 
+    /// Merges `from` into the checked-out branch.
+    ///
+    /// Fast-forwards where it can. A merge that would leave conflicts is refused and nothing is
+    /// written, because a half-merged resume.yaml is worse than no merge.
+    pub fn merge(&self, from: &str) -> Result<MergeOutcome, RepositoryError> {
+        let source = self
+            .repository
+            .find_branch(from, BranchType::Local)
+            .map_err(|_| RepositoryError::NotFound {
+                name: from.to_string(),
+            })?;
+        let source_commit = source
+            .get()
+            .peel_to_commit()
+            .map_err(|_| precondition_error())?;
+
+        let head = self.local_head()?;
+        let head_commit = head.peel_to_commit().map_err(|_| precondition_error())?;
+        let head_name = head.shorthand().unwrap_or_default().to_string();
+
+        if head_commit.id() == source_commit.id() {
+            return Ok(MergeOutcome {
+                branch: head_name,
+                from: from.to_string(),
+                kind: "already-current".into(),
+                commit_id: Some(head_commit.id().to_string()),
+            });
+        }
+
+        let annotated = self
+            .repository
+            .find_annotated_commit(source_commit.id())
+            .map_err(RepositoryError::Operation)?;
+        let (analysis, _) = self
+            .repository
+            .merge_analysis(&[&annotated])
+            .map_err(RepositoryError::Operation)?;
+
+        if analysis.is_up_to_date() {
+            return Ok(MergeOutcome {
+                branch: head_name,
+                from: from.to_string(),
+                kind: "already-current".into(),
+                commit_id: Some(head_commit.id().to_string()),
+            });
+        }
+
+        if analysis.is_fast_forward() {
+            let mut reference = self
+                .repository
+                .find_reference(head.name().ok_or_else(non_utf8_error)?)
+                .map_err(RepositoryError::Operation)?;
+            reference
+                .set_target(source_commit.id(), "merge: fast-forward")
+                .map_err(RepositoryError::Operation)?;
+            self.repository
+                .set_head(reference.name().ok_or_else(non_utf8_error)?)
+                .map_err(RepositoryError::Operation)?;
+            self.repository
+                .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+                .map_err(RepositoryError::Operation)?;
+            return Ok(MergeOutcome {
+                branch: head_name,
+                from: from.to_string(),
+                kind: "fast-forward".into(),
+                commit_id: Some(source_commit.id().to_string()),
+            });
+        }
+
+        let mut index = self
+            .repository
+            .merge_commits(&head_commit, &source_commit, None)
+            .map_err(RepositoryError::Operation)?;
+
+        if index.has_conflicts() {
+            let paths: Vec<String> = index
+                .conflicts()
+                .map_err(RepositoryError::Operation)?
+                .filter_map(|conflict| conflict.ok())
+                .filter_map(|conflict| {
+                    conflict
+                        .our
+                        .or(conflict.their)
+                        .and_then(|entry| String::from_utf8(entry.path).ok())
+                })
+                .collect();
+            return Err(RepositoryError::Conflict {
+                message: format!("merge would conflict in {}", paths.join(", ")),
+            });
+        }
+
+        let tree_id = index
+            .write_tree_to(&self.repository)
+            .map_err(RepositoryError::Operation)?;
+        let tree = self
+            .repository
+            .find_tree(tree_id)
+            .map_err(RepositoryError::Operation)?;
+        let signature = self
+            .repository
+            .signature()
+            .map_err(RepositoryError::IdentityUnavailable)?;
+        let id = self
+            .repository
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                &format!("Merge {from} into {head_name}"),
+                &tree,
+                &[&head_commit, &source_commit],
+            )
+            .map_err(RepositoryError::Operation)?;
+        self.repository
+            .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .map_err(RepositoryError::Operation)?;
+
+        Ok(MergeOutcome {
+            branch: head_name,
+            from: from.to_string(),
+            kind: "merged".into(),
+            commit_id: Some(id.to_string()),
+        })
+    }
+
     fn local_head(&self) -> Result<git2::Reference<'_>, RepositoryError> {
         let head = self.repository.head().map_err(|_| precondition_error())?;
         if head.is_branch() {
@@ -589,6 +740,13 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// A repository with one commit on its initial branch.
+    fn seeded() -> (TempDir, ResumeRepository) {
+        let (dir, repository) = repo();
+        initial_commit(&repository, &dir);
+        (dir, repository)
+    }
+
     fn repo() -> (TempDir, ResumeRepository) {
         let dir = TempDir::new().unwrap();
         let repository = ResumeRepository::open_or_init(dir.path()).unwrap();
@@ -632,7 +790,8 @@ mod tests {
         assert!(reopened.log().unwrap().commits.is_empty());
         assert!(matches!(
             reopened.create_branch(CreateBranchRequest {
-                name: "next".into()
+                name: "next".into(),
+                from: None,
             }),
             Err(RepositoryError::Conflict { .. })
         ));
@@ -698,6 +857,7 @@ mod tests {
         let branch = repository
             .create_branch(CreateBranchRequest {
                 name: "revision".into(),
+                from: None,
             })
             .unwrap();
         assert_eq!(branch.commit_id, Some(initial.id));
@@ -709,7 +869,8 @@ mod tests {
         assert_eq!(state.head.unwrap().branch.as_deref(), Some("revision"));
         assert!(matches!(
             repository.create_branch(CreateBranchRequest {
-                name: "revision".into()
+                name: "revision".into(),
+                from: None,
             }),
             Err(RepositoryError::Conflict { .. })
         ));
@@ -729,6 +890,7 @@ mod tests {
         repository
             .create_branch(CreateBranchRequest {
                 name: "revision".into(),
+                from: None,
             })
             .unwrap();
         repository
@@ -822,6 +984,64 @@ mod tests {
                 message: " ".into()
             }),
             Err(RepositoryError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn a_branch_can_start_from_another_branch() {
+        let (_dir, repository) = seeded();
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "archetype/systems".into(),
+                from: None,
+            })
+            .unwrap();
+
+        let child = repository
+            .create_branch(CreateBranchRequest {
+                name: "apply/systems/acme".into(),
+                from: Some("archetype/systems".into()),
+            })
+            .unwrap();
+
+        assert_eq!(child.name, "apply/systems/acme");
+    }
+
+    #[test]
+    fn branching_from_a_branch_that_is_not_there_is_rejected() {
+        let (_dir, repository) = seeded();
+
+        assert!(matches!(
+            repository.create_branch(CreateBranchRequest {
+                name: "child".into(),
+                from: Some("nowhere".into()),
+            }),
+            Err(RepositoryError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn merging_a_branch_that_has_not_moved_changes_nothing() {
+        let (_dir, repository) = seeded();
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "sibling".into(),
+                from: None,
+            })
+            .unwrap();
+
+        let outcome = repository.merge("sibling").unwrap();
+
+        assert_eq!(outcome.kind, "already-current");
+    }
+
+    #[test]
+    fn merging_a_branch_that_is_not_there_is_rejected() {
+        let (_dir, repository) = seeded();
+
+        assert!(matches!(
+            repository.merge("nowhere"),
+            Err(RepositoryError::NotFound { .. })
         ));
     }
 }

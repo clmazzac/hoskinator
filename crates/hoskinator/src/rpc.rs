@@ -2,22 +2,26 @@
 //!
 //! Method names and error codes here are the stable surface every frontend speaks (ADR-0003).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use hoskinator_core::application::{Application, NewApplication, STATUSES};
 use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
+use hoskinator_core::lineage::{self, Lineage};
 use hoskinator_core::profile::Profile;
 use hoskinator_core::render::{self, RenderError, RenderedPdf};
 use hoskinator_core::repository::{
-    Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, RepositoryDiff,
-    RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus, ResumeRepository,
+    Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, MergeOutcome,
+    RepositoryDiff, RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus,
+    ResumeRepository,
 };
 use hoskinator_core::resume::{self, Design, ResumeError, ResumeSection};
 use hoskinator_core::search::SearchHit;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
+use hoskinator_core::workspace::{self, WorkspaceError, WorkspaceStatus};
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::ErrorObjectOwned;
@@ -74,6 +78,12 @@ pub const RENDER_PROGRAM_MISSING: i32 = -32023;
 pub const RENDER_FAILED: i32 = -32024;
 /// Running rendercv or collecting what it produced failed.
 pub const RENDER_IO: i32 = -32025;
+/// Reading or writing an application failed.
+pub const APPLICATION_IO: i32 = -32027;
+/// The GitHub CLI is missing or signed out.
+pub const WORKSPACE_GITHUB: i32 = -32028;
+/// Setting up the repository failed.
+pub const WORKSPACE_SETUP: i32 = -32029;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -217,6 +227,63 @@ pub trait RepositoryRpc {
 
     #[method(name = "repository.log")]
     async fn repository_log(&self) -> RpcResult<RepositoryLog>;
+
+    #[method(name = "repository.merge")]
+    async fn repository_merge(&self, from: String) -> RpcResult<MergeOutcome>;
+}
+
+#[rpc(server, client)]
+pub trait ApplicationRpc {
+    #[method(name = "application.list")]
+    async fn application_list(&self) -> RpcResult<Vec<Application>>;
+
+    #[method(name = "application.statuses")]
+    async fn application_statuses(&self) -> RpcResult<Vec<String>>;
+
+    #[method(name = "application.create")]
+    async fn application_create(&self, application: NewApplication) -> RpcResult<Application>;
+
+    #[method(name = "application.update")]
+    async fn application_update(
+        &self,
+        id: i64,
+        application: NewApplication,
+    ) -> RpcResult<Application>;
+
+    #[method(name = "application.delete")]
+    async fn application_delete(&self, id: i64) -> RpcResult<()>;
+}
+
+#[rpc(server, client)]
+pub trait WorkspaceRpc {
+    #[method(name = "workspace.status")]
+    async fn workspace_status(&self) -> RpcResult<WorkspaceStatus>;
+
+    #[method(name = "workspace.repositories")]
+    async fn workspace_repositories(&self) -> RpcResult<Vec<String>>;
+
+    #[method(name = "workspace.create_github")]
+    async fn workspace_create_github(
+        &self,
+        name: String,
+        destination: PathBuf,
+    ) -> RpcResult<WorkspaceStatus>;
+
+    #[method(name = "workspace.connect")]
+    async fn workspace_connect(
+        &self,
+        source: String,
+        destination: PathBuf,
+    ) -> RpcResult<WorkspaceStatus>;
+
+    #[method(name = "workspace.lineage")]
+    async fn workspace_lineage(&self, branch: String) -> RpcResult<Lineage>;
+
+    #[method(name = "workspace.names")]
+    async fn workspace_names(&self, slug: String, target: Option<String>) -> RpcResult<String>;
+
+    #[method(name = "workspace.push")]
+    async fn workspace_push(&self, branch: String) -> RpcResult<()>;
 }
 
 #[rpc(server, client)]
@@ -486,6 +553,11 @@ impl RepositoryRpcServer for RepositoryApi {
 
     async fn repository_diff(&self) -> RpcResult<RepositoryDiff> {
         self.operation(|repository| repository.diff()).await
+    }
+
+    async fn repository_merge(&self, from: String) -> RpcResult<MergeOutcome> {
+        self.operation(move |repository| repository.merge(&from))
+            .await
     }
 
     async fn repository_log(&self) -> RpcResult<RepositoryLog> {
@@ -866,6 +938,7 @@ fn store_code_for(error: &StoreError) -> i32 {
         | StoreError::Migrate { .. }
         | StoreError::SchemaVersion(_) => STORE_UNAVAILABLE,
         StoreError::DecodeProfile { .. } | StoreError::DecodeEntry { .. } => STORE_CORRUPT,
+        StoreError::WriteApplication(_) | StoreError::ReadApplications(_) => APPLICATION_IO,
         StoreError::CreateJobDescription(_)
         | StoreError::ReadJobDescriptions(_)
         | StoreError::DeleteJobDescription(_)
@@ -986,6 +1059,149 @@ fn repository_rpc_error(error: RepositoryError) -> ErrorObjectOwned {
         source_message(&error),
         None::<()>,
     )
+}
+
+/// Serves the application tracker from one store.
+pub struct ApplicationApi {
+    store: Arc<Store>,
+}
+
+impl ApplicationApi {
+    pub fn new(store: Arc<Store>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl ApplicationRpcServer for ApplicationApi {
+    async fn application_list(&self) -> RpcResult<Vec<Application>> {
+        self.store.applications().await.map_err(store_rpc_error)
+    }
+
+    async fn application_statuses(&self) -> RpcResult<Vec<String>> {
+        Ok(STATUSES.iter().map(|name| name.to_string()).collect())
+    }
+
+    async fn application_create(&self, application: NewApplication) -> RpcResult<Application> {
+        self.store
+            .create_application(&application)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn application_update(
+        &self,
+        id: i64,
+        application: NewApplication,
+    ) -> RpcResult<Application> {
+        self.store
+            .update_application(id, &application)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn application_delete(&self, id: i64) -> RpcResult<()> {
+        self.store
+            .delete_application(id)
+            .await
+            .map_err(store_rpc_error)
+    }
+}
+
+/// Serves repository setup and the GitHub account behind it.
+pub struct WorkspaceApi {
+    repository_path: Option<PathBuf>,
+}
+
+impl WorkspaceApi {
+    pub fn new(repository_path: Option<PathBuf>) -> Self {
+        Self { repository_path }
+    }
+
+    /// Remembers a newly set-up repository, so the next start finds it.
+    fn adopt(path: &Path) -> Result<(), WorkspaceError> {
+        match hoskinator_core::home::config_file_path() {
+            Some(config) => workspace::remember_repository(&config, path),
+            None => Ok(()),
+        }
+    }
+}
+
+#[async_trait]
+impl WorkspaceRpcServer for WorkspaceApi {
+    async fn workspace_status(&self) -> RpcResult<WorkspaceStatus> {
+        let path = self.repository_path.clone();
+        workspace_blocking(move || Ok(workspace::status(path.as_deref()))).await
+    }
+
+    async fn workspace_repositories(&self) -> RpcResult<Vec<String>> {
+        workspace_blocking(workspace::owned_repositories).await
+    }
+
+    async fn workspace_create_github(
+        &self,
+        name: String,
+        destination: PathBuf,
+    ) -> RpcResult<WorkspaceStatus> {
+        workspace_blocking(move || {
+            let path = workspace::create_github(&name, &destination)?;
+            WorkspaceApi::adopt(&path)?;
+            Ok(workspace::status(Some(&path)))
+        })
+        .await
+    }
+
+    async fn workspace_connect(
+        &self,
+        source: String,
+        destination: PathBuf,
+    ) -> RpcResult<WorkspaceStatus> {
+        workspace_blocking(move || {
+            let path = workspace::connect_github(&source, &destination)?;
+            WorkspaceApi::adopt(&path)?;
+            Ok(workspace::status(Some(&path)))
+        })
+        .await
+    }
+
+    async fn workspace_lineage(&self, branch: String) -> RpcResult<Lineage> {
+        Ok(lineage::read(&branch))
+    }
+
+    async fn workspace_names(&self, slug: String, target: Option<String>) -> RpcResult<String> {
+        Ok(match target {
+            Some(target) => lineage::application_branch(&slug, &target),
+            None => lineage::archetype_branch(&slug),
+        })
+    }
+
+    async fn workspace_push(&self, branch: String) -> RpcResult<()> {
+        let path = self
+            .repository_path
+            .clone()
+            .ok_or_else(resume_unavailable)?;
+        workspace_blocking(move || workspace::push(&path, &branch)).await
+    }
+}
+
+/// Runs a blocking workspace call and maps its failure onto a JSON-RPC error.
+async fn workspace_blocking<T, F>(operation: F) -> RpcResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, WorkspaceError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(WORKSPACE_SETUP, error.to_string(), None::<()>))?
+        .map_err(workspace_rpc_error)
+}
+
+fn workspace_rpc_error(error: WorkspaceError) -> ErrorObjectOwned {
+    let code = match error {
+        WorkspaceError::GhMissing | WorkspaceError::GhSignedOut => WORKSPACE_GITHUB,
+        _ => WORKSPACE_SETUP,
+    };
+    ErrorObjectOwned::owned(code, source_message(&error), None::<()>)
 }
 
 #[cfg(test)]
