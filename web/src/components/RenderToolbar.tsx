@@ -52,21 +52,28 @@ export default function RenderToolbar({
   rendering = false,
   disabled = false,
   problemCount = 0,
+  zoom,
+  onZoomChange,
+  page,
+  pageCount,
+  onPageChange,
 }: {
   onCollapse: () => void;
   onRender: () => void;
   rendering?: boolean;
   disabled?: boolean;
   problemCount?: number;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
+  page: number;
+  pageCount: number;
+  onPageChange: (page: number) => void;
 }) {
   const [exporting, setExporting] = useState(false);
   const [autoRender, setAutoRender] = useState(false);
-  const [zoom, setZoom] = useState(100);
-  const [page, setPage] = useState(1);
-  const pageCount = 1;
 
   const stepZoom = (by: number) =>
-    setZoom((current) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current + by)));
+    onZoomChange(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom + by)));
 
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
@@ -132,14 +139,14 @@ export default function RenderToolbar({
       <ToolbarButton
         label="Previous page"
         disabled={page <= 1}
-        onClick={() => setPage((p) => p - 1)}
+        onClick={() => onPageChange(page - 1)}
       >
         <ChevronUp className="size-4" />
       </ToolbarButton>
       <ToolbarButton
         label="Next page"
         disabled={page >= pageCount}
-        onClick={() => setPage((p) => p + 1)}
+        onClick={() => onPageChange(page + 1)}
       >
         <ChevronDown className="size-4" />
       </ToolbarButton>
@@ -151,7 +158,7 @@ export default function RenderToolbar({
           onChange={(event) => {
             const next = Number(event.target.value);
             if (Number.isInteger(next) && next >= 1 && next <= pageCount) {
-              setPage(next);
+              onPageChange(next);
             }
           }}
           className="h-6 w-9 rounded-sm border bg-transparent text-center focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
@@ -183,7 +190,7 @@ export default function RenderToolbar({
         />
         <DropdownMenuContent align="end">
           {ZOOM_STEPS.map((step) => (
-            <DropdownMenuItem key={step} onClick={() => setZoom(step)}>
+            <DropdownMenuItem key={step} onClick={() => onZoomChange(step)}>
               {step}%
             </DropdownMenuItem>
           ))}
