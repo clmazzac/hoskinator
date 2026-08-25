@@ -49,3 +49,20 @@ export function splitElements(details: string): string[] {
 export function joinElements(elements: string[]): string {
   return elements.join(", ");
 }
+
+// What a drag of something already in the resume carries: where it sits now.
+export const MOVE_MIME = "application/x-hoskinator-move";
+
+export function startMoveDrag(event: React.DragEvent, from: number): void {
+  event.dataTransfer.setData(MOVE_MIME, String(from));
+  event.dataTransfer.effectAllowed = "move";
+}
+
+export function draggedMove(event: React.DragEvent): number | null {
+  const held = event.dataTransfer.getData(MOVE_MIME);
+  return held === "" ? null : Number(held);
+}
+
+export function carriesMove(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(MOVE_MIME);
+}

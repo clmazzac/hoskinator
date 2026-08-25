@@ -9,11 +9,14 @@ import {
 import { entryLabel } from "@/entryFields";
 import {
   carriesEntry,
+  carriesMove,
   carriesWording,
   draggedEntry,
+  draggedMove,
   draggedWording,
   joinElements,
   splitElements,
+  startMoveDrag,
   startWordingDrag,
 } from "@/lib/placement";
 import { cn } from "@/lib/utils";
@@ -22,6 +25,8 @@ import {
   placeBullet,
   placeEntry,
   removeResumeBullet,
+  moveResumeBullet,
+  moveResumeEntry,
   removeResumeEntry,
   resumeOutline,
   setResumeEntryField,
@@ -141,6 +146,8 @@ function EntryNode({
   onRemoveEntry,
   onRemoveWording,
   onSetField,
+  onMoveEntry,
+  onMoveWording,
 }: {
   section: string;
   entry: ResumeEntry;
@@ -148,9 +155,12 @@ function EntryNode({
   onRemoveEntry: (section: string, index: number) => void;
   onRemoveWording: (section: string, index: number, at: number) => void;
   onSetField: (section: string, index: number, key: string, value: unknown) => void;
+  onMoveEntry: (section: string, from: number, to: number) => void;
+  onMoveWording: (section: string, index: number, from: number, to: number) => void;
 }) {
   const [open, setOpen] = useState(true);
   const [over, setOver] = useState(false);
+  const [wordingOver, setWordingOver] = useState<number | null>(null);
   const shape = shapeOf(entry.fields);
   const { title, subtitle, dates } = entryLabel(shape, entry.fields);
   const details = ((entry.fields ?? {}) as Record<string, unknown>).details;
@@ -162,15 +172,21 @@ function EntryNode({
       onOpenChange={setOpen}
       className={cn("border-b", over && "bg-muted/60 ring-1 ring-ring ring-inset")}
       onDragOver={(event: React.DragEvent) => {
-        if (!carriesWording(event)) return;
+        if (!carriesWording(event) && !carriesMove(event)) return;
         event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
+        event.dataTransfer.dropEffect = carriesMove(event) ? "move" : "copy";
         setOver(true);
       }}
       onDragLeave={() => setOver(false)}
       onDrop={(event: React.DragEvent) => {
-        const text = draggedWording(event);
         setOver(false);
+        const from = draggedMove(event);
+        if (from !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          return onMoveEntry(section, from, entry.index);
+        }
+        const text = draggedWording(event);
         if (!text) return;
         event.preventDefault();
         setOpen(true);
@@ -187,8 +203,15 @@ function EntryNode({
         }
       }}
     >
-      <div className="group flex items-baseline gap-1.5 pr-2">
-        <CollapsibleTrigger className="flex flex-1 items-baseline gap-1.5 py-1 pl-6 text-left hover:bg-muted/50">
+      <div
+        className="group flex items-baseline gap-1.5 pr-2"
+        draggable
+        onDragStart={(event: React.DragEvent) => {
+          event.stopPropagation();
+          startMoveDrag(event, entry.index);
+        }}
+      >
+        <CollapsibleTrigger className="flex flex-1 cursor-grab items-baseline gap-1.5 py-1 pl-6 text-left hover:bg-muted/50 active:cursor-grabbing">
           <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-90" />
           <span className="truncate text-xs font-medium">{title}</span>
           {subtitle && !isOneLine && (
@@ -219,7 +242,33 @@ function EntryNode({
           </p>
         ) : (
           entry.highlights.map((highlight, at) => (
-            <div key={at} className="group flex gap-1.5 py-1 pr-2 pl-9">
+            <div
+              key={at}
+              draggable
+              onDragStart={(event) => {
+                event.stopPropagation();
+                startMoveDrag(event, at);
+              }}
+              onDragOver={(event) => {
+                if (!carriesMove(event)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setWordingOver(at);
+              }}
+              onDragLeave={() => setWordingOver(null)}
+              onDrop={(event) => {
+                const from = draggedMove(event);
+                setWordingOver(null);
+                if (from === null) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onMoveWording(section, entry.index, from, at);
+              }}
+              className={cn(
+                "group flex cursor-grab gap-1.5 py-1 pr-2 pl-9 active:cursor-grabbing",
+                wordingOver === at && "bg-muted",
+              )}
+            >
               <span className="mt-1.5 ml-1 size-1 shrink-0 rounded-full bg-muted-foreground" />
               <span className="flex-1 text-xs leading-snug">{highlight}</span>
               <RemoveButton
@@ -307,6 +356,10 @@ export default function ResumeOutline() {
               onRemoveWording={(s, i, at) => run(removeResumeBullet(s, i, at))}
               onSetField={(s, i, key, value) =>
                 run(setResumeEntryField(s, i, key, value))
+              }
+              onMoveEntry={(s, from, to) => run(moveResumeEntry(s, from, to))}
+              onMoveWording={(s, i, from, to) =>
+                run(moveResumeBullet(s, i, from, to))
               }
             />
           ))}

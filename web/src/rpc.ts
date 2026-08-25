@@ -301,3 +301,20 @@ export function setResumeEntryField(
 ): Promise<null> {
   return call<null>("resume.set_entry_field", [section, entryIndex, key, value]);
 }
+
+export function moveResumeEntry(
+  section: string,
+  from: number,
+  to: number,
+): Promise<null> {
+  return call<null>("resume.move_entry", [section, from, to]);
+}
+
+export function moveResumeBullet(
+  section: string,
+  entryIndex: number,
+  from: number,
+  to: number,
+): Promise<null> {
+  return call<null>("resume.move_bullet", [section, entryIndex, from, to]);
+}

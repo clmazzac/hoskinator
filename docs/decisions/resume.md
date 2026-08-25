@@ -91,12 +91,12 @@ resume's sections render in the order the file lists them.
 Master Store, deduplicated, or reconciled, and placing an Entry copies its fields without writing a
 reference back (ADR-0001).
 
-**Known limitation: `set_entry_field` is only sound against a block-style entry.** When
-`place_entry` creates a section the resume did not have, `yamlpatch` renders it as a flow mapping.
-Replacing a field inside a flow mapping with a value holding a comma splits the mapping into further
-keys. The schema check in `write` catches this and rejects it, so the file is never corrupted, but
-the edit fails. Entries appended to a section that already exists are block style and unaffected.
+**A created section is written as a block sequence.** A key `Add` renders its value inline, so a
+section created that way arrives as a flow mapping — and rewriting a field inside one with a value
+holding a comma splits the mapping into further keys. `place_entry` therefore adds the section and
+then replaces it, which re-emits it as a block sequence. A hand-editable file wants block style
+anyway, and later field writes depend on it.
 
-Replacing the whole entry instead was tried and is worse: `yamlpatch::Op::Replace` mis-indents a
-mapping at a sequence position, leaking the entry's keys up into `cv:`. The fix belongs upstream, or
-in emitting block style when a section is created.
+**Reordering rewrites the list it touches.** `move_entry` and `move_bullet` replace the whole
+sequence, because `yamlpatch` has `Append` and `Remove` but nothing that inserts at a position.
+Comments inside a reordered list do not survive. Comments elsewhere in the document do.

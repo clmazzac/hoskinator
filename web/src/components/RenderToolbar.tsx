@@ -10,6 +10,7 @@ import {
   Plus,
 } from "lucide-react";
 
+import ExportDialog from "@/components/ExportDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -52,6 +53,7 @@ export default function RenderToolbar({
   onCollapse: () => void;
   problemCount?: number;
 }) {
+  const [exporting, setExporting] = useState(false);
   const [autoRender, setAutoRender] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [page, setPage] = useState(1);
@@ -105,9 +107,10 @@ export default function RenderToolbar({
         )}
       </div>
 
-      <ToolbarButton label="Download PDF">
+      <ToolbarButton label="Export" onClick={() => setExporting(true)}>
         <Download className="size-4" />
       </ToolbarButton>
+      <ExportDialog open={exporting} onOpenChange={setExporting} />
 
       <div className="flex-1" />
 

@@ -232,6 +232,18 @@ pub trait ResumeRpc {
     #[method(name = "resume.remove_entry")]
     async fn resume_remove_entry(&self, section: String, entry_index: usize) -> RpcResult<()>;
 
+    #[method(name = "resume.move_entry")]
+    async fn resume_move_entry(&self, section: String, from: usize, to: usize) -> RpcResult<()>;
+
+    #[method(name = "resume.move_bullet")]
+    async fn resume_move_bullet(
+        &self,
+        section: String,
+        entry_index: usize,
+        from: usize,
+        to: usize,
+    ) -> RpcResult<()>;
+
     #[method(name = "resume.set_entry_field")]
     async fn resume_set_entry_field(
         &self,
@@ -518,6 +530,28 @@ impl ResumeRpcServer for ResumeApi {
         let profile = self.store.profile().await.map_err(store_rpc_error)?;
         self.operation(move || resume::remove_entry(&path, &section, entry_index, &profile))
             .await
+    }
+
+    async fn resume_move_entry(&self, section: String, from: usize, to: usize) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::move_entry(&path, &section, from, to, &profile))
+            .await
+    }
+
+    async fn resume_move_bullet(
+        &self,
+        section: String,
+        entry_index: usize,
+        from: usize,
+        to: usize,
+    ) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || {
+            resume::move_bullet(&path, &section, entry_index, from, to, &profile)
+        })
+        .await
     }
 
     async fn resume_set_entry_field(
