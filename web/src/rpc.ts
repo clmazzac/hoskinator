@@ -244,3 +244,32 @@ export type RepositoryResult = RepositoryState | Branch | CommitRecord | Reposit
 export function callRepository(request: RepositoryRequest): Promise<RepositoryResult> {
   return call<RepositoryResult>(request.method, request.params);
 }
+
+/** One entry of a resume section, at the position it sits in the file. */
+export interface ResumeEntry {
+  index: number;
+  fields: unknown;
+  highlights: string[];
+}
+
+/** One section of a resume, named as the file names it. */
+export interface ResumeSection {
+  name: string;
+  entries: ResumeEntry[];
+}
+
+export function readResume(): Promise<string> {
+  return call<string>("resume.read", []);
+}
+
+export function resumeOutline(): Promise<ResumeSection[]> {
+  return call<ResumeSection[]>("resume.outline", []);
+}
+
+export function placeBullet(
+  section: string,
+  entryIndex: number,
+  text: string,
+): Promise<null> {
+  return call<null>("resume.place_bullet", [section, entryIndex, text]);
+}

@@ -3,6 +3,7 @@ import { PanelRightOpen } from "lucide-react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 
 import MasterStore from "@/components/MasterStore";
+import ResumeOutline from "@/components/ResumeOutline";
 import MenuBar from "@/components/MenuBar";
 import RenderToolbar from "@/components/RenderToolbar";
 import { Button } from "@/components/ui/button";
@@ -63,9 +64,7 @@ export default function ResumeEditor() {
 
           <ResizablePanel id="resume" defaultSize="28" minSize={MIN_PANEL_SIZE}>
             <Column>
-              <Unbuilt>
-                The Bullets and elements in use, by part of the resume.
-              </Unbuilt>
+              <ResumeOutline />
             </Column>
           </ResizablePanel>
 

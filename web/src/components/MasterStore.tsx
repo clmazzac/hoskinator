@@ -7,6 +7,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { carriesBullets, entryLabel } from "@/entryFields";
+import { startWordingDrag } from "@/lib/placement";
 import {
   eligibleEntries,
   listBullets,
@@ -63,8 +64,12 @@ function BulletNode({ bullet }: { bullet: Bullet }) {
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger
-        className="group flex w-full gap-1.5 py-1 pr-2 pl-9 text-left hover:bg-muted/50"
+        className="group flex w-full cursor-grab gap-1.5 py-1 pr-2 pl-9 text-left hover:bg-muted/50 active:cursor-grabbing"
         disabled={others.length === 0}
+        draggable
+        onDragStart={(event: React.DragEvent) =>
+          shown && startWordingDrag(event, shown.text)
+        }
       >
         {others.length > 0 ? (
           <Chevron className="mt-0.5" />
@@ -81,7 +86,14 @@ function BulletNode({ bullet }: { bullet: Bullet }) {
 
       <CollapsibleContent>
         {others.map((variant) => (
-          <div key={variant.id} className="py-1 pr-2 pl-14">
+          <div
+            key={variant.id}
+            className="cursor-grab py-1 pr-2 pl-14 hover:bg-muted/50 active:cursor-grabbing"
+            draggable
+            onDragStart={(event: React.DragEvent) =>
+              startWordingDrag(event, variant.text)
+            }
+          >
             <p className="text-xs leading-snug text-muted-foreground">
               {variant.text}
             </p>
