@@ -70,6 +70,7 @@ function Row({
   onMerge,
   onAdd,
   busy,
+  children,
 }: {
   branch: Branch;
   depth: number;
@@ -78,6 +79,7 @@ function Row({
   onMerge: (from: string, into: string, direction: "up" | "down") => void;
   onAdd?: () => void;
   busy: string | null;
+  children?: number;
   }) {
   const linked = applications.filter((one) => one.resume_branch === branch.name);
   const settled = linked.some((one) => one.status === "offer" || one.status === "rejected");
@@ -122,12 +124,21 @@ function Row({
               settled
             </span>
           )}
+          {children !== undefined && children > 0 && (
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              {children} resume{children === 1 ? "" : "s"}
+            </span>
+          )}
         </span>
-        <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
-          {branch.name}
-          {linked.length > 0 &&
-            ` · ${linked.length} application${linked.length === 1 ? "" : "s"}`}
-        </span>
+        {(branch.name.includes("/") || linked.length > 0) && (
+          <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
+            {branch.name.includes("/") ? branch.name : ""}
+            {linked.length > 0 &&
+              `${branch.name.includes("/") ? " · " : ""}${linked.length} application${
+                linked.length === 1 ? "" : "s"
+              }`}
+          </span>
+        )}
       </button>
 
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
@@ -335,6 +346,7 @@ export default function ResumeTree({
               onCheckout={checkout}
               onMerge={merge}
               busy={busy}
+              children={node.children.length}
               onAdd={() => {
                 setAdding(node.branch.name);
                 setLabel("");
@@ -362,17 +374,21 @@ export default function ResumeTree({
                 </Button>
               </div>
             )}
-            {node.children.map((child) => (
-              <Row
-                key={child.branch.name}
-                branch={child.branch}
-                depth={2}
-                applications={applications}
-                onCheckout={checkout}
-                onMerge={merge}
-                busy={busy}
-              />
-            ))}
+            {node.children.length > 0 && (
+              <div className="ml-[1.9rem] border-l">
+                {node.children.map((child) => (
+                  <Row
+                    key={child.branch.name}
+                    branch={child.branch}
+                    depth={1}
+                    applications={applications}
+                    onCheckout={checkout}
+                    onMerge={merge}
+                    busy={busy}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         ))}
 

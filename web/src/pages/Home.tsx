@@ -50,16 +50,20 @@ export default function Home() {
   const saveAll = () => {
     setBusy(true);
     setNotice(null);
+    // The commit and the push fail for different reasons — a repository with no remote commits
+    // perfectly well — so a failed push must not read as a failed commit.
     commitResume("Update resume")
-      .then(() => (head ? pushBranch(head) : Promise.resolve(null)))
-      .then(() => {
+      .then(
+        () =>
+          (head ? pushBranch(head) : Promise.resolve(null)).then(
+            () => "Committed and pushed.",
+            (failure: Error) => `Committed. Push failed: ${failure.message}`,
+          ),
+        (failure: Error) => `Nothing committed: ${failure.message}`,
+      )
+      .then((said) => {
         setBusy(false);
-        setNotice("Committed and pushed.");
-        load();
-      })
-      .catch((failure: Error) => {
-        setBusy(false);
-        setNotice(failure.message);
+        setNotice(said);
         load();
       });
   };
