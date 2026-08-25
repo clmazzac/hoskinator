@@ -351,12 +351,25 @@ export interface RenderedPdf {
   path: string;
 }
 
+export interface RenderedDocx {
+  path: string;
+}
+
 export function renderAvailable(): Promise<boolean> {
   return call<boolean>("render.available", []);
 }
 
 export function renderPreview(): Promise<RenderedPdf> {
   return call<RenderedPdf>("render.preview", []);
+}
+
+/** Whether a DOCX can be exported: both rendercv and pandoc must be on PATH. */
+export function renderAvailableDocx(): Promise<boolean> {
+  return call<boolean>("render.available_docx", []);
+}
+
+export function renderPreviewDocx(): Promise<RenderedDocx> {
+  return call<RenderedDocx>("render.preview_docx", []);
 }
 
 /** Everything under `design:` the picker can set. */

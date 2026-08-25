@@ -44,3 +44,41 @@ at the file the caller asked for, so nothing but the PDF outlives the call.
 
 **Consequence:** `tempfile` moves from a dev-dependency of `hoskinator-core` to an ordinary one. It
 was already in the build graph, so this adds no crate.
+
+## DOCX goes through rendercv's Markdown, not its HTML (Slice 10, #11)
+
+`render.docx` asks rendercv for Markdown (`--markdown-path`, with `-notyp -nohtml -nopng` so nothing
+else is generated) and pipes it into `pandoc -o <path>`. rendercv's own HTML output was the other
+candidate; it renders through `github-markdown-css` and looks nothing like the themed PDF, so
+converting through it would add nothing over Markdown.
+
+**Availability needs both tools.** `render.available_docx` answers `true` only when both rendercv and
+pandoc are on PATH. A frontend that asks once and hides the button never needs to know which of the
+two is missing; `render.docx` still answers a specific `RENDER_PANDOC_MISSING` or
+`RENDER_PROGRAM_MISSING` if either vanishes between the two calls.
+
+**Skipping Typst is a speed-up, not just a scope cut.** Asking rendercv for Markdown alone measured
+under 10ms locally, against over a second for a PDF — DOCX export never pays for typesetting it then
+throws away.
+
+## The live preview renders for real, on a cooldown, not a separate approximation (Slice 10, #11)
+
+The Web UI's preview is `render.preview` itself — a real `rendercv` shell-out — now triggered
+automatically after every resume edit (`resume.place`, `.remove`, `.move`, …), not only on a theme
+change or a manual click. A trailing throttle holds it to one render per 2-second window: an edit
+inside a cooldown extends it rather than queuing another render behind one already running.
+
+**This replaces the "no external dependency" acceptance criterion rather than satisfying it.**
+Scoping a client-side approximation of rendercv's classic theme — built from its design tokens and
+layout templates, not its (visually unrelated) HTML output — found it tractable. The real thing won
+once it proved fast enough. Measured end to end (`render.preview` over the RPC, then again through a
+live click in the browser): a cold first render takes about 3.3s (starting rendercv's Python
+interpreter); every render after that lands at 1.2–1.7s regardless of resume length, since the cost
+is the interpreter start, not the content.
+
+**Why 2 seconds:** comfortably above the measured steady-state latency, so a render has time to
+finish before the next edit's cooldown would fire an overlapping request at the same output path.
+
+**Accepted cost:** the preview lags roughly a cooldown-and-a-render behind the last keystroke, rather
+than updating live as you type. Given the tools available, a preview through rendercv can't be both
+real and instantaneous — only one of those was worth keeping.

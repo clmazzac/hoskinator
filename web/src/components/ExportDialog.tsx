@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { renderPreview } from "@/rpc";
+import { renderAvailableDocx, renderPreview, renderPreviewDocx } from "@/rpc";
 import {
   Dialog,
   DialogClose,
@@ -20,9 +20,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-// rendercv 2.8 writes PDF, HTML, Markdown, PNG and Typst — never DOCX, and nothing here
-// converts to it. PDF is the only one offered until a second format is asked for.
-const FORMATS = [{ value: "pdf", label: "PDF", extension: "pdf" }];
+// DOCX goes through pandoc, over the Markdown rendercv writes (rendercv has no native DOCX
+// writer). Both must be on PATH; render.available_docx is checked before the format is usable.
+const FORMATS = [
+  { value: "pdf", label: "PDF", extension: "pdf" },
+  { value: "docx", label: "DOCX", extension: "docx" },
+];
 
 export default function ExportDialog({
   open,
@@ -36,8 +39,16 @@ export default function ExportDialog({
   const [name, setName] = useState("resume");
   const [busy, setBusy] = useState(false);
   const [format, setFormat] = useState("pdf");
+  const [docxAvailable, setDocxAvailable] = useState<boolean | null>(null);
   const extension =
     FORMATS.find((candidate) => candidate.value === format)?.extension ?? "pdf";
+
+  useEffect(() => {
+    if (!open) return;
+    renderAvailableDocx().then(setDocxAvailable, () => setDocxAvailable(false));
+  }, [open]);
+
+  const docxUnavailable = format === "docx" && docxAvailable === false;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -76,21 +87,28 @@ export default function ExportDialog({
                 ))}
               </SelectContent>
             </Select>
+            {docxUnavailable && (
+              <p className="text-xs text-muted-foreground">
+                pandoc is not on PATH, so DOCX cannot be exported.
+              </p>
+            )}
           </div>
         </div>
 
         <DialogFooter>
           <DialogClose render={<Button variant="ghost">Cancel</Button>} />
           <Button
-            disabled={busy || name.trim() === ""}
+            disabled={busy || name.trim() === "" || docxUnavailable}
             onClick={() => {
               setBusy(true);
-              renderPreview().then(
+              const rendered = format === "docx" ? renderPreviewDocx() : renderPreview();
+              rendered.then(
                 () => {
                   setBusy(false);
                   onOpenChange(false);
-                  onRender();
-                  window.location.href = `/preview.pdf?download=${encodeURIComponent(
+                  // Refreshes the on-screen PDF preview; DOCX has nothing on screen to refresh.
+                  if (format === "pdf") onRender();
+                  window.location.href = `/preview.${extension}?download=${encodeURIComponent(
                     `${name}.${extension}`,
                   )}`;
                 },

@@ -83,3 +83,32 @@ fn a_resume_rendercv_rejects_carries_its_complaint_back() {
         "no complaint about the bad section: {diagnostics}"
     );
 }
+
+#[test]
+#[ignore]
+fn the_installed_pandoc_is_available() {
+    assert!(render::is_pandoc_available(), "pandoc is not on PATH");
+}
+
+#[test]
+#[ignore]
+fn a_resume_exports_to_the_named_docx_and_leaves_nothing_else_behind() {
+    let dir = repository(RESUME);
+    let output = TempDir::new().unwrap();
+
+    let exported = render::docx(dir.path(), output.path(), "Ada").unwrap();
+
+    assert_eq!(exported.path, output.path().join("Ada.docx"));
+    // A DOCX is a ZIP archive.
+    assert!(std::fs::read(&exported.path).unwrap().starts_with(b"PK\x03\x04"));
+    let produced: Vec<_> = std::fs::read_dir(output.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(produced, ["Ada.docx"]);
+    let repository_files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(repository_files, [resume::FILENAME]);
+}

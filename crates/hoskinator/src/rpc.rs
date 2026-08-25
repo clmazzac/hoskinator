@@ -11,7 +11,7 @@ use hoskinator_core::entry::{Entry, EntryError, EntryFields};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::lineage::{self, Lineage};
 use hoskinator_core::profile::Profile;
-use hoskinator_core::render::{self, RenderError, RenderedPdf};
+use hoskinator_core::render::{self, RenderError, RenderedDocx, RenderedPdf};
 use hoskinator_core::repository::{
     Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, MergeOutcome,
     RepositoryDiff, RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus,
@@ -84,6 +84,10 @@ pub const APPLICATION_IO: i32 = -32027;
 pub const WORKSPACE_GITHUB: i32 = -32028;
 /// Setting up the repository failed.
 pub const WORKSPACE_SETUP: i32 = -32029;
+/// pandoc is not on PATH.
+pub const RENDER_PANDOC_MISSING: i32 = -32030;
+/// pandoc ran and reported failure.
+pub const RENDER_PANDOC_FAILED: i32 = -32031;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -367,6 +371,16 @@ pub trait RenderRpc {
 
     #[method(name = "render.run")]
     async fn render_run(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedPdf>;
+
+    /// Whether a DOCX can be exported: both rendercv and pandoc must be on PATH.
+    #[method(name = "render.available_docx")]
+    async fn render_available_docx(&self) -> RpcResult<bool>;
+
+    #[method(name = "render.preview_docx")]
+    async fn render_preview_docx(&self) -> RpcResult<RenderedDocx>;
+
+    #[method(name = "render.docx")]
+    async fn render_docx(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedDocx>;
 }
 
 /// Serves the Profile methods from one store.
@@ -761,6 +775,29 @@ impl RenderRpcServer for RenderApi {
             .await?
             .map_err(render_rpc_error)
     }
+
+    async fn render_available_docx(&self) -> RpcResult<bool> {
+        blocking(|| render::is_available() && render::is_pandoc_available()).await
+    }
+
+    async fn render_preview_docx(&self) -> RpcResult<RenderedDocx> {
+        self.render_docx(
+            crate::serve::preview_directory(),
+            crate::serve::PREVIEW_DOCX_FILE.to_string(),
+        )
+        .await
+    }
+
+    async fn render_docx(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedDocx> {
+        let repository = self
+            .repository_path
+            .clone()
+            .ok_or_else(render_unavailable)?;
+
+        blocking(move || render::docx(&repository, &directory, &file_name))
+            .await?
+            .map_err(render_rpc_error)
+    }
 }
 
 /// Runs a rendercv call off the async runtime.
@@ -1010,6 +1047,11 @@ fn render_code_for(error: &RenderError) -> i32 {
         RenderError::ProgramMissing => RENDER_PROGRAM_MISSING,
         RenderError::Failed { .. } => RENDER_FAILED,
         RenderError::Spawn(_) | RenderError::Scratch(_) | RenderError::NoOutput { .. } => RENDER_IO,
+        RenderError::PandocMissing => RENDER_PANDOC_MISSING,
+        RenderError::PandocFailed { .. } => RENDER_PANDOC_FAILED,
+        RenderError::PandocSpawn(_) | RenderError::OutputDir { .. } | RenderError::NoDocxOutput { .. } => {
+            RENDER_IO
+        }
     }
 }
 
@@ -1308,6 +1350,32 @@ mod tests {
             render_code_for(&RenderError::NoOutput { path: "x".into() }),
             RENDER_IO
         );
+        assert_eq!(
+            render_code_for(&RenderError::PandocMissing),
+            RENDER_PANDOC_MISSING
+        );
+        assert_eq!(
+            render_code_for(&RenderError::PandocFailed {
+                code: Some(1),
+                diagnostics: "broke".into(),
+            }),
+            RENDER_PANDOC_FAILED
+        );
+        assert_eq!(
+            render_code_for(&RenderError::PandocSpawn(io_error())),
+            RENDER_IO
+        );
+        assert_eq!(
+            render_code_for(&RenderError::OutputDir {
+                path: "x".into(),
+                source: io_error(),
+            }),
+            RENDER_IO
+        );
+        assert_eq!(
+            render_code_for(&RenderError::NoDocxOutput { path: "x".into() }),
+            RENDER_IO
+        );
     }
 
     #[test]
@@ -1351,6 +1419,8 @@ mod tests {
             RENDER_PROGRAM_MISSING,
             RENDER_FAILED,
             RENDER_IO,
+            RENDER_PANDOC_MISSING,
+            RENDER_PANDOC_FAILED,
         ];
         assert!(codes.iter().all(|code| (-32099..=-32000).contains(code)));
         let unique: std::collections::HashSet<_> = codes.iter().collect();

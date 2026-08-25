@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import RenderToolbar from "@/components/RenderToolbar";
 import { renderAvailable, renderPreview } from "@/rpc";
@@ -24,21 +24,28 @@ export default function RenderPanel({
   const [error, setError] = useState<string | null>(null);
   // Bumped on every successful render, to defeat the browser's cache of the same URL.
   const [stamp, setStamp] = useState(0);
+  // Mirrors `rendering` for `run`, which closes over it before a state update can land.
+  const renderingRef = useRef(false);
 
   useEffect(() => {
     renderAvailable().then(setAvailable, () => setAvailable(false));
   }, []);
 
   const run = useCallback(() => {
+    // A second render while one is in flight would race the first to the same PDF path.
+    if (renderingRef.current) return;
+    renderingRef.current = true;
     setRendering(true);
     renderPreview().then(
       () => {
         setError(null);
         setStamp(Date.now());
+        renderingRef.current = false;
         setRendering(false);
       },
       (failure: Error) => {
         setError(failure.message);
+        renderingRef.current = false;
         setRendering(false);
       },
     );

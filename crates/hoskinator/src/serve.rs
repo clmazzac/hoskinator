@@ -28,6 +28,8 @@ use crate::rpc::{
 pub const DEFAULT_PORT: u16 = 8737;
 /// Path the rendered PDF is served from, so a browser can show what rendercv produced.
 pub const PREVIEW_PATH: &str = "/preview.pdf";
+/// Path the exported DOCX is served from.
+pub const PREVIEW_DOCX_PATH: &str = "/preview.docx";
 
 /// Where renders land: the platform temp directory, not the resume repository.
 ///
@@ -96,6 +98,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     Ok(Router::new()
         .route(RPC_PATH, post(dispatch))
         .route(PREVIEW_PATH, get(preview))
+        .route(PREVIEW_DOCX_PATH, get(preview_docx))
         .fallback(crate::web::asset)
         .layer(axum::middleware::from_fn(authenticate))
         .with_state(Arc::new(module)))
@@ -103,12 +106,26 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
 
 /// Serves the most recent render. `?download=<name>` asks the browser to save it under that name.
 async fn preview(axum::extract::Query(query): axum::extract::Query<PreviewQuery>) -> Response {
-    let path = preview_directory().join(PREVIEW_FILE);
+    served_file(PREVIEW_FILE, "application/pdf", query.download)
+}
+
+/// Serves the most recent DOCX export. `?download=<name>` asks the browser to save it under that name.
+async fn preview_docx(axum::extract::Query(query): axum::extract::Query<PreviewQuery>) -> Response {
+    served_file(
+        PREVIEW_DOCX_FILE,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        query.download,
+    )
+}
+
+/// Reads `file_name` out of the preview directory and serves it with `content_type`.
+fn served_file(file_name: &str, content_type: &str, download: Option<String>) -> Response {
+    let path = preview_directory().join(file_name);
     let Ok(bytes) = std::fs::read(&path) else {
         return (StatusCode::NOT_FOUND, "nothing has been rendered yet").into_response();
     };
 
-    let disposition = match query.download.as_deref() {
+    let disposition = match download.as_deref() {
         Some(name) if !name.is_empty() => {
             format!("attachment; filename=\"{}\"", name.replace('"', ""))
         }
@@ -117,7 +134,7 @@ async fn preview(axum::extract::Query(query): axum::extract::Query<PreviewQuery>
 
     (
         [
-            (header::CONTENT_TYPE, "application/pdf".to_string()),
+            (header::CONTENT_TYPE, content_type.to_string()),
             (header::CONTENT_DISPOSITION, disposition),
             (header::CACHE_CONTROL, "no-store".to_string()),
         ],
@@ -133,6 +150,9 @@ struct PreviewQuery {
 
 /// The file every render writes, replaced each time.
 pub const PREVIEW_FILE: &str = "preview.pdf";
+
+/// The file every DOCX export writes, replaced each time.
+pub const PREVIEW_DOCX_FILE: &str = "preview.docx";
 
 /// Hands the request body to jsonrpsee and returns whatever it answers.
 async fn dispatch(State(module): State<Arc<RpcModule<()>>>, body: String) -> Response {
@@ -918,6 +938,44 @@ mod tests {
         let unwritten = call(
             router,
             r#"{"jsonrpc":"2.0","id":2,"method":"render.run","params":["out","Resume"]}"#,
+        )
+        .await;
+
+        assert_eq!(unwritten["error"]["code"], crate::rpc::RENDER_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn render_available_docx_answers_whether_it_can_run_without_erroring_over_a_missing_tool()
+     {
+        let (_dir, router) = test_router().await;
+
+        let available = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.available_docx","params":[]}"#,
+        )
+        .await;
+
+        assert!(available["result"].is_boolean(), "got {available}");
+    }
+
+    #[tokio::test]
+    async fn render_docx_reports_what_is_missing_before_reaching_the_renderer() {
+        let unconfigured = call(
+            test_router().await.1,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.docx","params":["out","Resume"]}"#,
+        )
+        .await;
+        assert_eq!(
+            unconfigured["error"]["code"],
+            crate::rpc::RENDER_UNAVAILABLE
+        );
+
+        let (dir, router) = repository_router().await;
+        std::fs::create_dir_all(dir.path().join("resume")).unwrap();
+
+        let unwritten = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"render.docx","params":["out","Resume"]}"#,
         )
         .await;
 
