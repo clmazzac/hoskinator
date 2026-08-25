@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { step, useReloadOnHistory } from "@/lib/history";
 import { cn } from "@/lib/utils";
 import { getProfile, setProfile, type Profile } from "@/rpc";
 
@@ -82,9 +83,15 @@ export default function ProfileNode() {
 
   useEffect(load, [load]);
 
+  useReloadOnHistory(load);
+
   const commit = (next: Profile) => {
+    const was = profile;
     setLoaded(next);
-    setProfile(next).then(load, (failure: Error) => {
+    step(
+      () => setProfile(next),
+      () => (was ? setProfile(was) : Promise.resolve(null)),
+    ).then(load, (failure: Error) => {
       setError(failure.message);
       load();
     });

@@ -282,6 +282,10 @@ export function readResume(): Promise<string> {
   return call<string>("resume.read", []);
 }
 
+export function writeResume(text: string): Promise<null> {
+  return call<null>("resume.write", [text]);
+}
+
 export function resumeOutline(): Promise<ResumeSection[]> {
   return call<ResumeSection[]>("resume.outline", []);
 }

@@ -22,6 +22,7 @@ import {
   startSectionDrag,
   startWordingDrag,
 } from "@/lib/placement";
+import { step, useReloadOnHistory } from "@/lib/history";
 import { cn } from "@/lib/utils";
 import {
   eligibleEntries,
@@ -106,8 +107,16 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
     bullet.variants.find((variant) => variant.is_default) ?? bullet.variants[0];
   const others = bullet.variants.filter((variant) => variant !== shown);
 
-  const edit = (id: number, text: string | null, note: string | null) =>
-    updateVariant(id, text, note).then(onEdited);
+  const edit = (
+    id: number,
+    text: string | null,
+    note: string | null,
+    was: { text: string; note: string | null },
+  ) =>
+    step(
+      () => updateVariant(id, text, note),
+      () => updateVariant(id, was.text, was.note),
+    ).then(onEdited);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -123,7 +132,7 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
         {shown && (
           <EditableText
             value={shown.text}
-            onCommit={(text) => edit(shown.id, text, null)}
+            onCommit={(text) => edit(shown.id, text, null, shown)}
             className="flex-1 text-xs leading-snug"
             multiline
           />
@@ -145,13 +154,13 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
             <div className="flex-1">
               <EditableText
                 value={variant.text}
-                onCommit={(text) => edit(variant.id, text, null)}
+                onCommit={(text) => edit(variant.id, text, null, variant)}
                 className="text-xs leading-snug text-muted-foreground"
                 multiline
               />
               <EditableText
                 value={variant.note ?? ""}
-                onCommit={(note) => edit(variant.id, null, note)}
+                onCommit={(note) => edit(variant.id, null, note, variant)}
                 placeholder="note"
                 className="text-[10px] text-muted-foreground/70 italic"
               />
@@ -179,10 +188,14 @@ function ElementNode({
   const held = (entry.fields ?? {}) as Record<string, unknown>;
 
   const rewrite = (next: string[]) =>
-    updateEntry(entry.id, {
-      ...held,
-      details: joinElements(next.filter(Boolean)),
-    }).then(onEdited);
+    step(
+      () =>
+        updateEntry(entry.id, {
+          ...held,
+          details: joinElements(next.filter(Boolean)),
+        }),
+      () => updateEntry(entry.id, held),
+    ).then(onEdited);
 
   return (
     <div className="flex items-start gap-1 py-1 pr-2 pl-7 hover:bg-muted/40">
@@ -208,13 +221,20 @@ function EntryFields({ entry, onEdited }: { entry: Entry; onEdited: () => void }
     entry.entry_type === "text" ? [TEXT_FIELD] : (ENTRY_FIELDS[entry.entry_type] ?? []);
 
   const commit = (name: string, next: string) => {
+    const was = entry.fields;
     if (entry.entry_type === "text") {
-      return updateEntry(entry.id, next).then(onEdited);
+      return step(
+        () => updateEntry(entry.id, next),
+        () => updateEntry(entry.id, was),
+      ).then(onEdited);
     }
     const fields: Record<string, unknown> = { ...held };
     if (next.trim() === "") delete fields[name];
     else fields[name] = isListField(name) ? next.split("\n") : next;
-    return updateEntry(entry.id, fields).then(onEdited);
+    return step(
+      () => updateEntry(entry.id, fields),
+      () => updateEntry(entry.id, was),
+    ).then(onEdited);
   };
 
   return (
@@ -328,11 +348,14 @@ export default function MasterStore() {
   const [sections, setSections] = useState<Section[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     listSections().then(setSections, (failure: Error) =>
       setError(failure.message),
     );
   }, []);
+
+  useEffect(load, [load]);
+  useReloadOnHistory(load);
 
   return (
     <div>

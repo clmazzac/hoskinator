@@ -21,6 +21,7 @@ import {
   startMoveDrag,
   startWordingDrag,
 } from "@/lib/placement";
+import { resumeStep, useReloadOnHistory } from "@/lib/history";
 import { cn } from "@/lib/utils";
 import {
   getEntry,
@@ -303,20 +304,21 @@ export default function ResumeOutline() {
 
   useEffect(load, [load]);
 
+  useReloadOnHistory(load);
+
   const run = useCallback(
-    (work: Promise<unknown>) =>
-      work.then(load, (failure: Error) => setError(failure.message)),
+    (work: () => Promise<unknown>) =>
+      resumeStep(work).then(load, (failure: Error) => setError(failure.message)),
     [load],
   );
 
   const dropEntry = useCallback(
     (section: string, entryId: number) => {
-      run(
-        getEntry(entryId).then((stored) => {
-          if (!stored) throw new Error(`entry ${entryId} is no longer in the store`);
-          return placeEntry(section, stored.fields);
-        }),
-      );
+      run(async () => {
+        const stored = await getEntry(entryId);
+        if (!stored) throw new Error(`entry ${entryId} is no longer in the store`);
+        return placeEntry(section, stored.fields);
+      });
     },
     [run],
   );
@@ -336,7 +338,7 @@ export default function ResumeOutline() {
         const name = draggedSection(event);
         if (!name) return;
         event.preventDefault();
-        run(placeSection(name));
+        run(() => placeSection(name));
       }}
     >
       {sections.length === 0 && (
@@ -369,15 +371,15 @@ export default function ResumeOutline() {
               key={`${entry.index}-${JSON.stringify(entry.fields)}`}
               section={section.name}
               entry={entry}
-              onPlaceWording={(s, i, text) => run(placeBullet(s, i, text))}
-              onRemoveEntry={(s, i) => run(removeResumeEntry(s, i))}
-              onRemoveWording={(s, i, at) => run(removeResumeBullet(s, i, at))}
+              onPlaceWording={(s, i, text) => run(() => placeBullet(s, i, text))}
+              onRemoveEntry={(s, i) => run(() => removeResumeEntry(s, i))}
+              onRemoveWording={(s, i, at) => run(() => removeResumeBullet(s, i, at))}
               onSetField={(s, i, key, value) =>
-                run(setResumeEntryField(s, i, key, value))
+                run(() => setResumeEntryField(s, i, key, value))
               }
-              onMoveEntry={(s, from, to) => run(moveResumeEntry(s, from, to))}
+              onMoveEntry={(s, from, to) => run(() => moveResumeEntry(s, from, to))}
               onMoveWording={(s, i, from, to) =>
-                run(moveResumeBullet(s, i, from, to))
+                run(() => moveResumeBullet(s, i, from, to))
               }
             />
           ))}

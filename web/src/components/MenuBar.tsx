@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, Moon, Sun } from "lucide-react";
+import { ChevronDown, Moon, Redo2, Sun, Undo2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { useHistory, useHistoryShortcuts } from "@/lib/history";
 import { isDark, setDark } from "@/lib/theme";
 import {
   resumeDesign,
@@ -22,14 +23,13 @@ import {
   type Design,
 } from "@/rpc";
 
-// Menus are empty until there are commands to put in them.
-const MENUS = ["File", "Edit"];
-
 export default function MenuBar({
   onThemeChanged,
 }: {
   onThemeChanged?: () => void;
 }) {
+  const { canUndo, canRedo, undo, redo } = useHistory();
+  useHistoryShortcuts();
   const [dark, setDarkState] = useState(isDark);
   const [design, setDesign] = useState<Design | null>(null);
   const [styles, setStyles] = useState<string[]>([]);
@@ -56,22 +56,28 @@ export default function MenuBar({
 
   return (
     <div className="flex h-8 shrink-0 items-center gap-0.5 border-b px-1">
-      {MENUS.map((name) => (
-        <DropdownMenu key={name}>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-sm font-normal"
-              >
-                {name}
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="start" className="min-w-40" />
-        </DropdownMenu>
-      ))}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-2 text-xs font-normal"
+        onClick={() => void undo()}
+        disabled={!canUndo}
+        title="Undo (Ctrl+Z)"
+      >
+        <Undo2 className="size-3.5" />
+        Undo
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-2 text-xs font-normal"
+        onClick={() => void redo()}
+        disabled={!canRedo}
+        title="Redo (Ctrl+Shift+Z)"
+      >
+        <Redo2 className="size-3.5" />
+        Redo
+      </Button>
 
       <div className="flex-1" />
 
