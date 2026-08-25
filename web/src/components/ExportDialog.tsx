@@ -5,7 +5,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -41,9 +40,6 @@ export default function ExportDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Export</DialogTitle>
-          <DialogDescription>
-            Renders the current branch and saves it under the name you give.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3">
@@ -78,10 +74,6 @@ export default function ExportDialog({
             </Select>
           </div>
         </div>
-
-        <p className="text-xs text-muted-foreground">
-          Rendering is not wired up yet, so this writes nothing.
-        </p>
 
         <DialogFooter>
           <DialogClose
