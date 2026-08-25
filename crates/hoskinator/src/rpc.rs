@@ -9,6 +9,7 @@ use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::profile::Profile;
+use hoskinator_core::render::{self, RenderError, RenderedPdf};
 use hoskinator_core::repository::{
     Branch, CheckoutRequest, CommitRecord, CommitRequest, CreateBranchRequest, RepositoryDiff,
     RepositoryError, RepositoryLog, RepositoryState, RepositoryStatus, ResumeRepository,
@@ -61,6 +62,16 @@ pub const RESUME_IO: i32 = -32018;
 pub const RESUME_INVALID: i32 = -32019;
 /// The resume section has no entry at the index a placement named.
 pub const RESUME_NO_SUCH_ENTRY: i32 = -32020;
+/// No resume repository was configured to render.
+pub const RENDER_UNAVAILABLE: i32 = -32021;
+/// The current branch has no resume.yaml to render.
+pub const RENDER_NOT_FOUND: i32 = -32022;
+/// rendercv is not on PATH.
+pub const RENDER_PROGRAM_MISSING: i32 = -32023;
+/// rendercv ran and reported failure.
+pub const RENDER_FAILED: i32 = -32024;
+/// Running rendercv or collecting what it produced failed.
+pub const RENDER_IO: i32 = -32025;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -263,6 +274,15 @@ pub trait ResumeRpc {
         entry_index: usize,
         highlight_index: usize,
     ) -> RpcResult<()>;
+}
+
+#[rpc(server, client)]
+pub trait RenderRpc {
+    #[method(name = "render.available")]
+    async fn render_available(&self) -> RpcResult<bool>;
+
+    #[method(name = "render.run")]
+    async fn render_run(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedPdf>;
 }
 
 /// Serves the Profile methods from one store.
@@ -594,6 +614,46 @@ impl ResumeRpcServer for ResumeApi {
     }
 }
 
+/// Serves rendering from the configured user-owned worktree.
+pub struct RenderApi {
+    repository_path: Option<PathBuf>,
+}
+
+impl RenderApi {
+    pub fn new(repository_path: Option<PathBuf>) -> Self {
+        Self { repository_path }
+    }
+}
+
+#[async_trait]
+impl RenderRpcServer for RenderApi {
+    async fn render_available(&self) -> RpcResult<bool> {
+        blocking(render::is_available).await
+    }
+
+    async fn render_run(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedPdf> {
+        let repository = self
+            .repository_path
+            .clone()
+            .ok_or_else(render_unavailable)?;
+
+        blocking(move || render::pdf(&repository, &directory, &file_name))
+            .await?
+            .map_err(render_rpc_error)
+    }
+}
+
+/// Runs a rendercv call off the async runtime.
+async fn blocking<T, F>(operation: F) -> RpcResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(RENDER_IO, error.to_string(), None::<()>))
+}
+
 #[async_trait]
 impl EntryRpcServer for EntryApi {
     async fn entry_create(
@@ -822,6 +882,27 @@ fn resume_code_for(error: &ResumeError) -> i32 {
     }
 }
 
+fn render_code_for(error: &RenderError) -> i32 {
+    match error {
+        RenderError::ResumeNotFound { .. } => RENDER_NOT_FOUND,
+        RenderError::ProgramMissing => RENDER_PROGRAM_MISSING,
+        RenderError::Failed { .. } => RENDER_FAILED,
+        RenderError::Spawn(_) | RenderError::Scratch(_) | RenderError::NoOutput { .. } => RENDER_IO,
+    }
+}
+
+fn render_unavailable() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        RENDER_UNAVAILABLE,
+        "no resume repository is configured",
+        None::<()>,
+    )
+}
+
+fn render_rpc_error(error: RenderError) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(render_code_for(&error), source_message(&error), None::<()>)
+}
+
 fn resume_unavailable() -> ErrorObjectOwned {
     ErrorObjectOwned::owned(
         RESUME_UNAVAILABLE,
@@ -941,6 +1022,44 @@ mod tests {
     }
 
     #[test]
+    fn render_errors_have_stable_codes() {
+        assert_eq!(
+            render_code_for(&RenderError::ResumeNotFound { path: "x".into() }),
+            RENDER_NOT_FOUND
+        );
+        assert_eq!(
+            render_code_for(&RenderError::ProgramMissing),
+            RENDER_PROGRAM_MISSING
+        );
+        assert_eq!(
+            render_code_for(&RenderError::Failed {
+                code: Some(1),
+                diagnostics: "broke".into(),
+            }),
+            RENDER_FAILED
+        );
+        assert_eq!(render_code_for(&RenderError::Spawn(io_error())), RENDER_IO);
+        assert_eq!(
+            render_code_for(&RenderError::NoOutput { path: "x".into() }),
+            RENDER_IO
+        );
+    }
+
+    #[test]
+    fn a_render_failure_carries_what_the_renderer_said() {
+        let error = RenderError::Failed {
+            code: Some(1),
+            diagnostics: "cv.sections.experience is not an entry type".into(),
+        };
+
+        assert!(
+            render_rpc_error(error)
+                .message()
+                .contains("not an entry type")
+        );
+    }
+
+    #[test]
     fn every_code_sits_in_the_server_defined_range_and_is_unique() {
         let codes = [
             STORE_UNAVAILABLE,
@@ -962,6 +1081,11 @@ mod tests {
             RESUME_NOT_FOUND,
             RESUME_IO,
             RESUME_INVALID,
+            RENDER_UNAVAILABLE,
+            RENDER_NOT_FOUND,
+            RENDER_PROGRAM_MISSING,
+            RENDER_FAILED,
+            RENDER_IO,
         ];
         assert!(codes.iter().all(|code| (-32099..=-32000).contains(code)));
         let unique: std::collections::HashSet<_> = codes.iter().collect();

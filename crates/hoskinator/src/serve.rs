@@ -18,9 +18,9 @@ use jsonrpsee::RpcModule;
 
 use crate::rpc::{
     BulletApi, BulletRpcServer, EntryApi, EntryRpcServer, JobDescriptionApi,
-    JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RepositoryApi, RepositoryRpcServer,
-    ResumeApi, ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
-    SectionRpcServer,
+    JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RenderApi, RenderRpcServer,
+    RepositoryApi, RepositoryRpcServer, ResumeApi, ResumeRepositoryProvider, ResumeRpcServer,
+    SearchApi, SearchRpcServer, SectionApi, SectionRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
@@ -76,6 +76,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(ResumeApi::new(store, resume_repo.clone()).into_rpc())?;
+    module.merge(RenderApi::new(resume_repo.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
     Ok(Router::new()
@@ -836,6 +837,43 @@ mod tests {
         assert!(written.contains("name: Ada Lovelace"));
         assert!(written.contains("# hand-edited"));
         assert!(written.contains("Experience: []"));
+    }
+
+    #[tokio::test]
+    async fn render_answers_whether_it_can_run_without_erroring_over_a_missing_tool() {
+        let (_dir, router) = test_router().await;
+
+        let available = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.available","params":[]}"#,
+        )
+        .await;
+
+        assert!(available["result"].is_boolean(), "got {available}");
+    }
+
+    #[tokio::test]
+    async fn render_run_reports_what_is_missing_before_reaching_the_renderer() {
+        let unconfigured = call(
+            test_router().await.1,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.run","params":["out","Resume"]}"#,
+        )
+        .await;
+        assert_eq!(
+            unconfigured["error"]["code"],
+            crate::rpc::RENDER_UNAVAILABLE
+        );
+
+        let (dir, router) = repository_router().await;
+        std::fs::create_dir_all(dir.path().join("resume")).unwrap();
+
+        let unwritten = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"render.run","params":["out","Resume"]}"#,
+        )
+        .await;
+
+        assert_eq!(unwritten["error"]["code"], crate::rpc::RENDER_NOT_FOUND);
     }
 
     #[tokio::test]
