@@ -281,7 +281,7 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="flex items-center gap-1 py-1 pr-2 pl-4 hover:bg-muted/40">
-        <Grip onDragStart={(event) => startEntryDrag(event, entry.id)} />
+        <Grip onDragStart={(event) => startEntryDrag(event, entry.id, entry.entry_type)} />
         <Disclosure open={open} onToggle={() => setOpen(!open)} />
         <span className="truncate text-xs font-medium">{title}</span>
         {subtitle && (

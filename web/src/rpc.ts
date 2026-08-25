@@ -298,8 +298,8 @@ export function placeBullet(
   return call<null>("resume.place_bullet", [section, entryIndex, text]);
 }
 
-export function placeEntry(section: string, fields: unknown): Promise<null> {
-  return call<null>("resume.place_entry", [section, fields]);
+export function placeEntry(section: string, entryType: string, fields: unknown): Promise<null> {
+  return call<null>("resume.place_entry", [section, entryType, fields]);
 }
 
 export function removeResumeEntry(
@@ -421,6 +421,7 @@ export interface WorkspaceStatus {
   repository_path: string | null;
   repository_ready: boolean;
   remote_url: string | null;
+  applications_sheet: string | null;
 }
 
 export interface MergeOutcome {
@@ -466,6 +467,16 @@ export function connectRepository(
   return call<WorkspaceStatus>("workspace.connect", [source, destination]);
 }
 
+/** Links a Google Sheet by its URL or bare id; it must be shared "anyone with the link" (viewer). */
+export function linkSheet(link: string): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.link_sheet", [link]);
+}
+
+/** Fetches the linked sheet's first tab as CSV. */
+export function sheetCsv(): Promise<string> {
+  return call<string>("workspace.sheet_csv", []);
+}
+
 export function pushBranch(branch: string): Promise<null> {
   return call<null>("workspace.push", [branch]);
 }
@@ -496,6 +507,11 @@ export function mergeBranch(from: string): Promise<MergeOutcome> {
 
 export function repositoryStatus(): Promise<{ entries: unknown[] }> {
   return call<{ entries: unknown[] }>("repository.status", []);
+}
+
+/** Writes `contents` to `path` in the repository and stages it for the next commit. */
+export function writeStagedFile(path: string, contents: string): Promise<null> {
+  return call<null>("repository.write_staged", [path, contents]);
 }
 
 export function listApplications(): Promise<Application[]> {

@@ -29,7 +29,7 @@ import {
 const FIXTURE = `cv:
   name: Barnaby Q. Fenwhistle
   sections:
-    experience:
+    Experience:
       - company: Helio Systems
         position: Staff Software Engineer
         start_date: 2022-06
@@ -43,7 +43,7 @@ const FIXTURE = `cv:
         end_date: 2022-05
         highlights:
           - RAVENSMOOR WORDING
-    skills:
+    Skills:
       - label: Languages
         details: Rust, Go, Python
 design:
@@ -108,7 +108,7 @@ async function openSecondSkillsEntry(page: Page): Promise<void> {
 }
 
 const highlights = async (index: number) =>
-  (await section("experience")).entries[index].highlights;
+  (await section("Experience")).entries[index].highlights;
 
 test("a bullet with one wording drops into an entry", async ({ page }) => {
   await openFirstExperienceEntry(page);
@@ -134,10 +134,10 @@ test("an entry drops onto a section header", async ({ page }) => {
   await openBankRow(page, "Experience");
   const label = String(bankExperience[2].fields?.company);
 
-  await bankGrip(page, label).dragTo(resumeText(page, "experience"));
+  await bankGrip(page, label).dragTo(resumeText(page, "Experience"));
 
   await expect
-    .poll(() => entryTitles("experience"))
+    .poll(() => entryTitles("Experience"))
     .toEqual(["Helio Systems", "Ravensmoor Analytics", label]);
 });
 
@@ -148,23 +148,33 @@ test("an entry drops onto another entry", async ({ page }) => {
   await bankGrip(page, label).dragTo(resumeText(page, "Helio Systems"));
 
   await expect
-    .poll(() => entryTitles("experience"))
+    .poll(() => entryTitles("Experience"))
     .toEqual(["Helio Systems", "Ravensmoor Analytics", label]);
 });
 
+test("an entry of the wrong type does not drop into a section", async ({ page }) => {
+  await openBankRow(page, "Skills");
+  const label = String(bankSkills[0].fields?.label);
+
+  await bankGrip(page, label).dragTo(resumeText(page, "Experience"));
+
+  await settled(page);
+  expect(await entryTitles("Experience")).toEqual(["Helio Systems", "Ravensmoor Analytics"]);
+});
+
 test("a section drops into the resume", async ({ page }) => {
-  await bankGrip(page, "Publications").dragTo(resumeText(page, "experience"));
+  await bankGrip(page, "Publications").dragTo(resumeText(page, "Experience"));
 
   await expect
     .poll(async () => (await outline()).map((held) => held.name))
-    .toEqual(["experience", "skills", "Publications"]);
+    .toEqual(["Experience", "Skills", "Publications"]);
 });
 
 test("an entry reorders onto the entry above it", async ({ page }) => {
   await resumeText(page, "Ravensmoor Analytics").dragTo(resumeText(page, "Helio Systems"));
 
   await expect
-    .poll(() => entryTitles("experience"))
+    .poll(() => entryTitles("Experience"))
     .toEqual(["Ravensmoor Analytics", "Helio Systems"]);
 });
 
@@ -180,7 +190,7 @@ test("an element drops onto a one-line entry", async ({ page }) => {
 
   await grip.dragTo(resumeText(page, "Languages"));
 
-  await expect.poll(() => details("skills", 0)).toBe(`Rust, Go, Python, ${element}`);
+  await expect.poll(() => details("Skills", 0)).toBe(`Rust, Go, Python, ${element}`);
 });
 
 test("an element dropped onto a chip is added, not read as a reorder", async ({ page }) => {
@@ -189,7 +199,7 @@ test("an element dropped onto a chip is added, not read as a reorder", async ({ 
 
   await grip.dragTo(resumeChip(page, 2));
 
-  await expect.poll(() => details("skills", 0)).toBe(`Rust, Go, Python, ${element}`);
+  await expect.poll(() => details("Skills", 0)).toBe(`Rust, Go, Python, ${element}`);
 });
 
 test("an entry dropped onto a chip still reaches the section", async ({ page }) => {
@@ -198,13 +208,13 @@ test("an entry dropped onto a chip still reaches the section", async ({ page }) 
 
   await bankGrip(page, label).dragTo(resumeChip(page, 1));
 
-  await expect.poll(() => entryTitles("skills")).toEqual(["Languages", label]);
+  await expect.poll(() => entryTitles("Skills")).toEqual(["Languages", label]);
 });
 
 test("chips reorder inside their entry", async ({ page }) => {
   await resumeChip(page, 2).dragTo(resumeChip(page, 0));
 
-  await expect.poll(() => details("skills", 0)).toBe("Python, Rust, Go");
+  await expect.poll(() => details("Skills", 0)).toBe("Python, Rust, Go");
 });
 
 test("a chip dropped clear of every chip is not copied back in", async ({ page }) => {
@@ -213,7 +223,7 @@ test("a chip dropped clear of every chip is not copied back in", async ({ page }
   await resumeChip(page, 2).dragTo(resumeText(page, "Languages"));
 
   await settled(page);
-  expect(await details("skills", 0)).toBe("Rust, Go, Python");
+  expect(await details("Skills", 0)).toBe("Rust, Go, Python");
 });
 
 test("a wording dropped clear of the wording list reorders nothing", async ({ page }) => {
@@ -224,7 +234,7 @@ test("a wording dropped clear of the wording list reorders nothing", async ({ pa
   await resumeText(page, "SECOND WORDING").dragTo(resumeText(page, "Ravensmoor Analytics"));
   await settled(page);
 
-  expect(await entryTitles("experience")).toEqual(["Helio Systems", "Ravensmoor Analytics"]);
+  expect(await entryTitles("Experience")).toEqual(["Helio Systems", "Ravensmoor Analytics"]);
   expect(await highlights(0)).toEqual(["FIRST WORDING", "SECOND WORDING"]);
   expect(await highlights(1)).toEqual(["RAVENSMOOR WORDING"]);
 });
@@ -233,9 +243,9 @@ test("an entry dropped onto another entry's wording moves the entry", async ({ p
   await resumeText(page, "Ravensmoor Analytics").dragTo(resumeText(page, "FIRST WORDING"));
 
   await expect
-    .poll(() => entryTitles("experience"))
+    .poll(() => entryTitles("Experience"))
     .toEqual(["Ravensmoor Analytics", "Helio Systems"]);
   await expect
-    .poll(async () => (await section("experience")).entries[1].highlights)
+    .poll(async () => (await section("Experience")).entries[1].highlights)
     .toEqual(["FIRST WORDING", "SECOND WORDING"]);
 });

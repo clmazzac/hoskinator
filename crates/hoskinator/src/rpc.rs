@@ -21,6 +21,7 @@ use hoskinator_core::resume::{self, Design, ResumeError, ResumeSection};
 use hoskinator_core::search::SearchHit;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::store::{Store, StoreError};
+use hoskinator_core::sheets::{self, SheetError};
 use hoskinator_core::workspace::{self, WorkspaceError, WorkspaceStatus};
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
@@ -88,6 +89,10 @@ pub const WORKSPACE_SETUP: i32 = -32029;
 pub const RENDER_PANDOC_MISSING: i32 = -32030;
 /// pandoc ran and reported failure.
 pub const RENDER_PANDOC_FAILED: i32 = -32031;
+/// The linked Google Sheet could not be read, or none is linked.
+pub const WORKSPACE_SHEET: i32 = -32032;
+/// The entry's type does not match the section it was placed into.
+pub const RESUME_SECTION_TYPE_MISMATCH: i32 = -32033;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -234,6 +239,10 @@ pub trait RepositoryRpc {
 
     #[method(name = "repository.merge")]
     async fn repository_merge(&self, from: String) -> RpcResult<MergeOutcome>;
+
+    /// Writes `contents` to `path` in the repository and stages it for the next commit.
+    #[method(name = "repository.write_staged")]
+    async fn repository_write_staged(&self, path: String, contents: String) -> RpcResult<()>;
 }
 
 #[rpc(server, client)]
@@ -288,6 +297,15 @@ pub trait WorkspaceRpc {
 
     #[method(name = "workspace.push")]
     async fn workspace_push(&self, branch: String) -> RpcResult<()>;
+
+    /// Links a Google Sheet by its URL or bare id. The sheet must be shared "anyone with the
+    /// link" as a viewer; nothing here authenticates.
+    #[method(name = "workspace.link_sheet")]
+    async fn workspace_link_sheet(&self, link: String) -> RpcResult<WorkspaceStatus>;
+
+    /// Fetches the linked sheet's first tab as CSV.
+    #[method(name = "workspace.sheet_csv")]
+    async fn workspace_sheet_csv(&self) -> RpcResult<String>;
 }
 
 #[rpc(server, client)]
@@ -309,9 +327,15 @@ pub trait ResumeRpc {
         text: String,
     ) -> RpcResult<()>;
 
+    /// Rejects the placement if `entry_type` does not match the section's own configured type —
+    /// rendercv's schema requires a section's entries to share one shape.
     #[method(name = "resume.place_entry")]
-    async fn resume_place_entry(&self, section: String, fields: serde_json::Value)
-    -> RpcResult<()>;
+    async fn resume_place_entry(
+        &self,
+        section: String,
+        entry_type: EntryType,
+        fields: serde_json::Value,
+    ) -> RpcResult<()>;
 
     #[method(name = "resume.design")]
     async fn resume_design(&self) -> RpcResult<Design>;
@@ -386,11 +410,15 @@ pub trait RenderRpc {
 /// Serves the Profile methods from one store.
 pub struct ProfileApi {
     store: Arc<Store>,
+    repository_path: Option<PathBuf>,
 }
 
 impl ProfileApi {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<Store>, repository_path: Option<PathBuf>) -> Self {
+        Self {
+            store,
+            repository_path,
+        }
     }
 }
 
@@ -491,7 +519,19 @@ impl ProfileRpcServer for ProfileApi {
         self.store
             .set_profile(&profile)
             .await
-            .map_err(store_rpc_error)
+            .map_err(store_rpc_error)?;
+
+        // Best-effort: resume.yaml's cv: header carries a snapshot of the Profile, refreshed on
+        // every resume write. Without this, that snapshot would only catch up on the next
+        // placement, reorder, or other edit — not on the Profile edit itself.
+        if let Some(path) = self.repository_path.clone() {
+            let _ = tokio::task::spawn_blocking(move || {
+                resume::read(&path).and_then(|text| resume::write(&path, text, &profile))
+            })
+            .await;
+        }
+
+        Ok(())
     }
 }
 
@@ -577,6 +617,11 @@ impl RepositoryRpcServer for RepositoryApi {
     async fn repository_log(&self) -> RpcResult<RepositoryLog> {
         self.operation(|repository| repository.log()).await
     }
+
+    async fn repository_write_staged(&self, path: String, contents: String) -> RpcResult<()> {
+        self.operation(move |repository| repository.write_staged(&path, &contents))
+            .await
+    }
 }
 
 /// Serves the resume.yaml methods from the configured user-owned worktree.
@@ -643,8 +688,19 @@ impl ResumeRpcServer for ResumeApi {
     async fn resume_place_entry(
         &self,
         section: String,
+        entry_type: EntryType,
         fields: serde_json::Value,
     ) -> RpcResult<()> {
+        let target = self
+            .store
+            .section(&section)
+            .await
+            .map_err(store_rpc_error)?
+            .ok_or_else(|| section_not_found(&section))?;
+        if target.entry_type != entry_type {
+            return Err(section_type_mismatch(&section, target.entry_type, entry_type));
+        }
+
         let path = self.repository_path()?;
         let profile = self.store.profile().await.map_err(store_rpc_error)?;
         self.operation(move || resume::place_entry(&path, &section, fields, &profile))
@@ -1023,6 +1079,7 @@ fn repository_code_for(error: &RepositoryError) -> i32 {
         RepositoryError::InvalidRequest { .. } => REPOSITORY_INVALID_REQUEST,
         RepositoryError::IdentityUnavailable(_) => REPOSITORY_IDENTITY_UNAVAILABLE,
         RepositoryError::Operation(_) => REPOSITORY_OPERATION,
+        RepositoryError::Io { .. } => REPOSITORY_OPERATION,
     }
 }
 
@@ -1071,6 +1128,26 @@ fn resume_unavailable() -> ErrorObjectOwned {
     ErrorObjectOwned::owned(
         RESUME_UNAVAILABLE,
         "no resume repository is configured",
+        None::<()>,
+    )
+}
+
+fn section_not_found(section: &str) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        SECTION_NOT_FOUND,
+        format!("no section named {section}"),
+        None::<()>,
+    )
+}
+
+fn section_type_mismatch(section: &str, expected: EntryType, got: EntryType) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        RESUME_SECTION_TYPE_MISMATCH,
+        format!(
+            "{section} holds {expected} entries, not {got}",
+            expected = expected.as_str(),
+            got = got.as_str()
+        ),
         None::<()>,
     )
 }
@@ -1150,7 +1227,7 @@ impl ApplicationRpcServer for ApplicationApi {
     }
 }
 
-/// Serves repository setup and the GitHub account behind it.
+/// Serves repository setup, the GitHub account behind it, and the linked application sheet.
 pub struct WorkspaceApi {
     repository_path: Option<PathBuf>,
 }
@@ -1167,13 +1244,27 @@ impl WorkspaceApi {
             None => Ok(()),
         }
     }
+
+    /// Reads the linked sheet id fresh from disk, so a sheet just linked is usable immediately —
+    /// unlike `repository_path`, which is fixed for the daemon's lifetime.
+    fn linked_sheet() -> Option<String> {
+        hoskinator_core::home::Home::config()
+            .ok()
+            .and_then(|config| config.applications_sheet)
+    }
 }
 
 #[async_trait]
 impl WorkspaceRpcServer for WorkspaceApi {
     async fn workspace_status(&self) -> RpcResult<WorkspaceStatus> {
         let path = self.repository_path.clone();
-        workspace_blocking(move || Ok(workspace::status(path.as_deref()))).await
+        workspace_blocking(move || {
+            Ok(workspace::status(
+                path.as_deref(),
+                WorkspaceApi::linked_sheet().as_deref(),
+            ))
+        })
+        .await
     }
 
     async fn workspace_repositories(&self) -> RpcResult<Vec<String>> {
@@ -1188,7 +1279,10 @@ impl WorkspaceRpcServer for WorkspaceApi {
         workspace_blocking(move || {
             let path = workspace::create_github(&name, &destination)?;
             WorkspaceApi::adopt(&path)?;
-            Ok(workspace::status(Some(&path)))
+            Ok(workspace::status(
+                Some(&path),
+                WorkspaceApi::linked_sheet().as_deref(),
+            ))
         })
         .await
     }
@@ -1201,7 +1295,10 @@ impl WorkspaceRpcServer for WorkspaceApi {
         workspace_blocking(move || {
             let path = workspace::connect_github(&source, &destination)?;
             WorkspaceApi::adopt(&path)?;
-            Ok(workspace::status(Some(&path)))
+            Ok(workspace::status(
+                Some(&path),
+                WorkspaceApi::linked_sheet().as_deref(),
+            ))
         })
         .await
     }
@@ -1224,6 +1321,35 @@ impl WorkspaceRpcServer for WorkspaceApi {
             .ok_or_else(resume_unavailable)?;
         workspace_blocking(move || workspace::push(&path, &branch)).await
     }
+
+    async fn workspace_link_sheet(&self, link: String) -> RpcResult<WorkspaceStatus> {
+        let path = self.repository_path.clone();
+        sheet_blocking(move || {
+            let id = sheets::id_from(&link)?;
+            if let Some(config) = hoskinator_core::home::config_file_path() {
+                sheets::remember(&config, &id)?;
+            }
+            Ok(workspace::status(path.as_deref(), Some(&id)))
+        })
+        .await
+    }
+
+    async fn workspace_sheet_csv(&self) -> RpcResult<String> {
+        let id = WorkspaceApi::linked_sheet().ok_or(SheetError::NotLinked);
+        sheet_blocking(move || sheets::csv(&id?)).await
+    }
+}
+
+/// Runs a blocking sheet call and maps its failure onto a JSON-RPC error.
+async fn sheet_blocking<T, F>(operation: F) -> RpcResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, SheetError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(WORKSPACE_SHEET, error.to_string(), None::<()>))?
+        .map_err(|error| ErrorObjectOwned::owned(WORKSPACE_SHEET, source_message(&error), None::<()>))
 }
 
 /// Runs a blocking workspace call and maps its failure onto a JSON-RPC error.
@@ -1421,6 +1547,7 @@ mod tests {
             RENDER_IO,
             RENDER_PANDOC_MISSING,
             RENDER_PANDOC_FAILED,
+            RESUME_SECTION_TYPE_MISMATCH,
         ];
         assert!(codes.iter().all(|code| (-32099..=-32000).contains(code)));
         let unique: std::collections::HashSet<_> = codes.iter().collect();

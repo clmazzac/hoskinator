@@ -1,3 +1,9 @@
+// A drag's payload is unreadable until it drops — `dataTransfer.getData` only works then — but
+// the *set* of MIME types present is readable throughout, including during dragover. Encoding an
+// entry's type into its MIME type, rather than only in the payload, is what lets a section reject
+// an incompatible drop before it lands: rendercv requires every entry in a section to share one
+// shape, so a mismatched drop would otherwise write a resume.yaml that fails validation.
+
 // What a drag from the Master Store carries into the resume: one wording.
 //
 // A Bullet is an accomplishment; a Variant is one wording of it. Only the wording crosses, because
@@ -20,20 +26,30 @@ export function carriesWording(event: React.DragEvent): boolean {
   return event.dataTransfer.types.includes(WORDING_MIME);
 }
 
-// What a drag of a whole Entry carries: the store id it came from.
-export const ENTRY_MIME = "application/x-hoskinator-entry";
+// What a drag of a whole Entry carries: the store id it came from, and its entry type — folded
+// into the MIME type itself, one per type, rather than carried only in the payload.
+const ENTRY_MIME_PREFIX = "application/x-hoskinator-entry-";
 
-export function startEntryDrag(event: React.DragEvent, entryId: number): void {
-  event.dataTransfer.setData(ENTRY_MIME, String(entryId));
+export function startEntryDrag(event: React.DragEvent, entryId: number, entryType: string): void {
+  event.dataTransfer.setData(`${ENTRY_MIME_PREFIX}${entryType}`, String(entryId));
   event.dataTransfer.effectAllowed = "copy";
 }
 
-export function draggedEntry(event: React.DragEvent): number | null {
-  return readNumber(event.dataTransfer.getData(ENTRY_MIME));
+export function draggedEntry(event: React.DragEvent): { id: number; type: string } | null {
+  const mime = event.dataTransfer.types.find((held) => held.startsWith(ENTRY_MIME_PREFIX));
+  if (!mime) return null;
+  const id = readNumber(event.dataTransfer.getData(mime));
+  return id === null ? null : { id, type: mime.slice(ENTRY_MIME_PREFIX.length) };
 }
 
+/** Whether a drag in progress carries an Entry of any type. */
 export function carriesEntry(event: React.DragEvent): boolean {
-  return event.dataTransfer.types.includes(ENTRY_MIME);
+  return event.dataTransfer.types.some((held) => held.startsWith(ENTRY_MIME_PREFIX));
+}
+
+/** Whether a drag in progress carries an Entry of exactly this type — readable during dragover. */
+export function carriesEntryOfType(event: React.DragEvent, entryType: string): boolean {
+  return event.dataTransfer.types.includes(`${ENTRY_MIME_PREFIX}${entryType}`);
 }
 
 // A one-line entry holds its elements as a comma-separated string, so each element is addressed

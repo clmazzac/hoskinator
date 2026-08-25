@@ -10,8 +10,8 @@ import SaveToBank from "@/components/SaveToBank";
 import { entryLabel } from "@/entryFields";
 import {
   carriesElement,
-  carriesEntry,
   carriesEntryMove,
+  carriesEntryOfType,
   carriesSection,
   carriesWording,
   carriesWordingMove,
@@ -31,6 +31,7 @@ import { resumeStep, useReloadOnHistory } from "@/lib/history";
 import { cn } from "@/lib/utils";
 import {
   getEntry,
+  listSections,
   placeBullet,
   placeEntry,
   removeResumeBullet,
@@ -43,6 +44,27 @@ import {
   type ResumeEntry,
   type ResumeSection,
 } from "@/rpc";
+
+/// Where an insertion will land, drawn between two rows rather than on top of either — a
+/// misdrop onto the wrong row is exactly how a mismatched entry used to end up in a section.
+function DropLine() {
+  return (
+    <div className="pointer-events-none relative z-10 h-0" aria-hidden>
+      <div className="absolute inset-x-1 top-0 flex -translate-y-1/2 items-center">
+        <svg width="7" height="7" viewBox="0 0 7 7" className="shrink-0 fill-foreground">
+          <path d="M0 0 L7 3.5 L0 7 Z" />
+        </svg>
+        <div className="h-[2px] flex-1 rounded-full bg-foreground" />
+      </div>
+    </div>
+  );
+}
+
+/// Whether the pointer sits in the top or bottom half of a row being dragged over.
+function edgeOf(event: React.DragEvent): "before" | "after" {
+  const box = event.currentTarget.getBoundingClientRect();
+  return event.clientY < box.top + box.height / 2 ? "before" : "after";
+}
 
 // A resume entry carries no type, so its shape names it.
 const TYPE_BY_TITLE_KEY: Record<string, string> = {
@@ -265,55 +287,59 @@ function EntryNode({
             Drop a wording here.
           </p>
         ) : (
-          entry.highlights.map((highlight, at) => (
-            <div
-              key={at}
-              draggable
-              onDragStart={(event) => {
-                event.stopPropagation();
-                startWordingMoveDrag(event, { entry: entry.index, at });
-              }}
-              onDragOver={(event) => {
-                if (!carriesWordingMove(event)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                setWordingOver(at);
-              }}
-              onDragLeave={() => setWordingOver(null)}
-              onDrop={(event) => {
-                setWordingOver(null);
-                const from = draggedWordingMove(event);
-                // A wording reorders inside its own entry only.
-                if (from === null || from.entry !== entry.index) return;
-                event.preventDefault();
-                event.stopPropagation();
-                onMoveWording(section, entry.index, from.at, at);
-              }}
-              className={cn(
-                "group flex cursor-grab gap-1.5 py-1 pr-2 pl-9 active:cursor-grabbing",
-                wordingOver === at && "bg-muted",
-              )}
-            >
-              <span className="mt-1.5 ml-1 size-1 shrink-0 rounded-full bg-muted-foreground" />
-              <span className="flex-1 text-xs leading-snug">{highlight}</span>
-              <button
-                type="button"
-                aria-label="Save this wording to the bank"
-                title="Save this wording to the bank"
-                className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onKeep(highlight);
-                }}
-              >
-                <BookmarkPlus className="size-3" />
-              </button>
-              <RemoveButton
-                label="Remove this wording"
-                onClick={() => onRemoveWording(section, entry.index, at)}
-              />
-            </div>
-          ))
+          <>
+            {entry.highlights.map((highlight, at) => (
+              <div key={at}>
+                {wordingOver === at && <DropLine />}
+                <div
+                  draggable
+                  onDragStart={(event) => {
+                    event.stopPropagation();
+                    startWordingMoveDrag(event, { entry: entry.index, at });
+                  }}
+                  onDragOver={(event) => {
+                    if (!carriesWordingMove(event)) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setWordingOver(at + (edgeOf(event) === "after" ? 1 : 0));
+                  }}
+                  onDragLeave={() => setWordingOver(null)}
+                  onDrop={(event) => {
+                    const insertAt = wordingOver;
+                    setWordingOver(null);
+                    const from = draggedWordingMove(event);
+                    // A wording reorders inside its own entry only.
+                    if (from === null || from.entry !== entry.index || insertAt === null) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const to = insertAt > from.at ? insertAt - 1 : insertAt;
+                    onMoveWording(section, entry.index, from.at, to);
+                  }}
+                  className="group flex cursor-grab gap-1.5 py-1 pr-2 pl-9 active:cursor-grabbing"
+                >
+                  <span className="mt-1.5 ml-1 size-1 shrink-0 rounded-full bg-muted-foreground" />
+                  <span className="flex-1 text-xs leading-snug">{highlight}</span>
+                  <button
+                    type="button"
+                    aria-label="Save this wording to the bank"
+                    title="Save this wording to the bank"
+                    className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onKeep(highlight);
+                    }}
+                  >
+                    <BookmarkPlus className="size-3" />
+                  </button>
+                  <RemoveButton
+                    label="Remove this wording"
+                    onClick={() => onRemoveWording(section, entry.index, at)}
+                  />
+                </div>
+              </div>
+            ))}
+            {wordingOver === entry.highlights.length && <DropLine />}
+          </>
         )}
       </CollapsibleContent>
     </Collapsible>
@@ -322,14 +348,22 @@ function EntryNode({
 
 export default function ResumeOutline() {
   const [sections, setSections] = useState<ResumeSection[] | null>(null);
+  const [sectionTypes, setSectionTypes] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [keeping, setKeeping] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    resumeOutline().then(
-      (loaded) => {
-        setSections(loaded);
+    // A section's type lives in the store, not the resume outline, which only knows what a
+    // section is already holding — the bank is what says what it's allowed to hold. Loaded
+    // together, not as two independent fetches: a drag landing between the two would find
+    // sections rendered but no types to check it against yet, and drop unchecked.
+    Promise.all([resumeOutline(), listSections()]).then(
+      ([loadedSections, loadedSectionTypes]) => {
+        setSections(loadedSections);
+        setSectionTypes(
+          Object.fromEntries(loadedSectionTypes.map((section) => [section.name, section.entry_type])),
+        );
         setError(null);
       },
       (failure: Error) => setError(failure.message),
@@ -351,7 +385,7 @@ export default function ResumeOutline() {
       run(async () => {
         const stored = await getEntry(entryId);
         if (!stored) throw new Error(`entry ${entryId} is no longer in the store`);
-        return placeEntry(section, stored.fields);
+        return placeEntry(section, stored.entry_type, stored.fields);
       });
     },
     [run],
@@ -383,48 +417,54 @@ export default function ResumeOutline() {
         open={keeping !== null}
         onOpenChange={(shown) => !shown && setKeeping(null)}
       />
-      {sections.map((section) => (
-        <div
-          key={section.name}
-          onDragOver={(event) => {
-            if (!carriesEntry(event)) return;
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "copy";
-            setOver(section.name);
-          }}
-          onDragLeave={() => setOver(null)}
-          onDrop={(event) => {
-            const id = draggedEntry(event);
-            setOver(null);
-            if (id === null) return;
-            event.preventDefault();
-            dropEntry(section.name, id);
-          }}
-          className={cn(over === section.name && "bg-muted/40")}
-        >
-          <div className="flex items-center gap-1.5 border-b px-2 py-1.5">
-            <span className="text-xs font-semibold">{section.name}</span>
+      {sections.map((section) => {
+        // rendercv requires every entry in a section to share one shape, so a section only ever
+        // accepts the one entry type it was created with.
+        const sectionType = sectionTypes[section.name];
+        return (
+          <div
+            key={section.name}
+            onDragOver={(event) => {
+              if (!sectionType || !carriesEntryOfType(event, sectionType)) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              setOver(section.name);
+            }}
+            onDragLeave={() => setOver(null)}
+            onDrop={(event) => {
+              const dragged = draggedEntry(event);
+              setOver(null);
+              if (dragged === null || dragged.type !== sectionType) return;
+              event.preventDefault();
+              dropEntry(section.name, dragged.id);
+            }}
+          >
+            <div className="flex items-center gap-1.5 border-b px-2 py-1.5">
+              <span className="text-xs font-semibold">{section.name}</span>
+            </div>
+            {section.entries.map((entry) => (
+              <EntryNode
+                key={`${entry.index}-${JSON.stringify(entry.fields)}`}
+                section={section.name}
+                entry={entry}
+                onPlaceWording={(s, i, text) => run(() => placeBullet(s, i, text))}
+                onRemoveEntry={(s, i) => run(() => removeResumeEntry(s, i))}
+                onRemoveWording={(s, i, at) => run(() => removeResumeBullet(s, i, at))}
+                onSetField={(s, i, key, value) =>
+                  run(() => setResumeEntryField(s, i, key, value))
+                }
+                onMoveEntry={(s, from, to) => run(() => moveResumeEntry(s, from, to))}
+                onMoveWording={(s, i, from, to) =>
+                  run(() => moveResumeBullet(s, i, from, to))
+                }
+                onKeep={setKeeping}
+              />
+            ))}
+            {/* New entries always append, so the insertion point is always the bottom. */}
+            {over === section.name && <DropLine />}
           </div>
-          {section.entries.map((entry) => (
-            <EntryNode
-              key={`${entry.index}-${JSON.stringify(entry.fields)}`}
-              section={section.name}
-              entry={entry}
-              onPlaceWording={(s, i, text) => run(() => placeBullet(s, i, text))}
-              onRemoveEntry={(s, i) => run(() => removeResumeEntry(s, i))}
-              onRemoveWording={(s, i, at) => run(() => removeResumeBullet(s, i, at))}
-              onSetField={(s, i, key, value) =>
-                run(() => setResumeEntryField(s, i, key, value))
-              }
-              onMoveEntry={(s, from, to) => run(() => moveResumeEntry(s, from, to))}
-              onMoveWording={(s, i, from, to) =>
-                run(() => moveResumeBullet(s, i, from, to))
-              }
-              onKeep={setKeeping}
-            />
-          ))}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

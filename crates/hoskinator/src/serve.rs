@@ -83,7 +83,7 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
 /// The daemon's routes, with every request passing the authenticator.
 fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, ServeError> {
     let mut module = RpcModule::new(());
-    module.merge(ProfileApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(ProfileApi::new(Arc::clone(&store), resume_repo.clone()).into_rpc())?;
     module.merge(SectionApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
@@ -294,6 +294,48 @@ mod tests {
         )
         .await;
         assert_eq!(got["result"], serde_json::to_value(&profile).unwrap());
+    }
+
+    #[tokio::test]
+    async fn setting_the_profile_refreshes_the_current_branch_s_resume_yaml() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Old Name\n").unwrap();
+
+        let profile = Profile {
+            name: Some("Ada Lovelace".into()),
+            ..Profile::default()
+        };
+        let params = serde_json::to_string(&profile).unwrap();
+        let set = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"profile.set","params":[{params}]}}"#),
+        )
+        .await;
+        assert!(set.get("error").is_none(), "set failed: {set}");
+
+        let written = std::fs::read_to_string(repo.join("resume.yaml")).unwrap();
+        assert!(written.contains("Ada Lovelace"), "got: {written}");
+        assert!(!written.contains("Old Name"), "got: {written}");
+    }
+
+    #[tokio::test]
+    async fn setting_the_profile_without_a_resume_yaml_yet_still_succeeds() {
+        let (dir, router) = repository_router().await;
+        std::fs::create_dir_all(dir.path().join("resume")).unwrap();
+
+        let profile = Profile {
+            name: Some("Ada Lovelace".into()),
+            ..Profile::default()
+        };
+        let params = serde_json::to_string(&profile).unwrap();
+        let set = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"profile.set","params":[{params}]}}"#),
+        )
+        .await;
+        assert!(set.get("error").is_none(), "set failed: {set}");
     }
 
     #[tokio::test]
@@ -942,6 +984,62 @@ mod tests {
         .await;
 
         assert_eq!(unwritten["error"]["code"], crate::rpc::RENDER_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn placing_an_entry_of_the_wrong_type_for_its_section_is_rejected() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(&repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Experience","experience"]}"#,
+        )
+        .await;
+
+        let mismatched = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"resume.place_entry","params":[
+                "Experience","education",{"institution":"asdf","area":"asdf"}]}"#,
+        )
+        .await;
+        assert_eq!(
+            mismatched["error"]["code"],
+            crate::rpc::RESUME_SECTION_TYPE_MISMATCH,
+            "got {mismatched}"
+        );
+
+        // Nothing was written: the section holds no entries at all yet.
+        let written = std::fs::read_to_string(repo.join("resume.yaml")).unwrap();
+        assert!(!written.contains("asdf"), "got: {written}");
+
+        let matched = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":3,"method":"resume.place_entry","params":[
+                "Experience","experience",{"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+        assert!(matched.get("error").is_none(), "got {matched}");
+        let written = std::fs::read_to_string(repo.join("resume.yaml")).unwrap();
+        assert!(written.contains("Acme"), "got: {written}");
+    }
+
+    #[tokio::test]
+    async fn placing_an_entry_into_a_section_that_does_not_exist_is_reported() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(&repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+
+        let missing = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"resume.place_entry","params":[
+                "Nowhere","experience",{"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+        assert_eq!(missing["error"]["code"], crate::rpc::SECTION_NOT_FOUND);
     }
 
     #[tokio::test]
