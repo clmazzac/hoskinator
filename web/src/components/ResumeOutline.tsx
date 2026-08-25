@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, Minus } from "lucide-react";
+import { BookmarkPlus, ChevronRight, Minus } from "lucide-react";
 
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import SaveToBank from "@/components/SaveToBank";
 import { entryLabel } from "@/entryFields";
 import {
   carriesEntry,
@@ -152,6 +153,7 @@ function EntryNode({
   onSetField,
   onMoveEntry,
   onMoveWording,
+  onKeep,
 }: {
   section: string;
   entry: ResumeEntry;
@@ -161,6 +163,7 @@ function EntryNode({
   onSetField: (section: string, index: number, key: string, value: unknown) => void;
   onMoveEntry: (section: string, from: number, to: number) => void;
   onMoveWording: (section: string, index: number, from: number, to: number) => void;
+  onKeep: (text: string) => void;
 }) {
   const [open, setOpen] = useState(true);
   const [over, setOver] = useState(false);
@@ -275,6 +278,18 @@ function EntryNode({
             >
               <span className="mt-1.5 ml-1 size-1 shrink-0 rounded-full bg-muted-foreground" />
               <span className="flex-1 text-xs leading-snug">{highlight}</span>
+              <button
+                type="button"
+                aria-label="Save this wording to the bank"
+                title="Save this wording to the bank"
+                className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onKeep(highlight);
+                }}
+              >
+                <BookmarkPlus className="size-3" />
+              </button>
               <RemoveButton
                 label="Remove this wording"
                 onClick={() => onRemoveWording(section, entry.index, at)}
@@ -291,6 +306,7 @@ export default function ResumeOutline() {
   const [sections, setSections] = useState<ResumeSection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [keeping, setKeeping] = useState<string | null>(null);
 
   const load = useCallback(() => {
     resumeOutline().then(
@@ -344,6 +360,11 @@ export default function ResumeOutline() {
       {sections.length === 0 && (
         <Note>Drag a Section across to start this resume.</Note>
       )}
+      <SaveToBank
+        text={keeping ?? ""}
+        open={keeping !== null}
+        onOpenChange={(shown) => !shown && setKeeping(null)}
+      />
       {sections.map((section) => (
         <div
           key={section.name}
@@ -381,6 +402,7 @@ export default function ResumeOutline() {
               onMoveWording={(s, i, from, to) =>
                 run(() => moveResumeBullet(s, i, from, to))
               }
+              onKeep={setKeeping}
             />
           ))}
         </div>
