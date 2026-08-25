@@ -35,11 +35,31 @@ async function call<T>(method: string, params: unknown[]): Promise<T> {
   return answer.result as T;
 }
 
-export function getProfile(): Promise<unknown> {
-  return call("profile.get", []);
+/** A username on a network rendercv knows. */
+export interface SocialConnection {
+  network: string;
+  username: string;
 }
 
-export function setProfile(profile: unknown): Promise<null> {
+/** The singleton record mirroring rendercv's `cv:` header. */
+export interface Profile {
+  name: string | null;
+  headline: string | null;
+  location: string | null;
+  photo: string | null;
+  /** One value or several — the form the user wrote is kept. */
+  email: string | string[] | null;
+  phone: string | string[] | null;
+  website: string | string[] | null;
+  social_networks: SocialConnection[];
+  custom_connections: unknown[];
+}
+
+export function getProfile(): Promise<Profile> {
+  return call<Profile>("profile.get", []);
+}
+
+export function setProfile(profile: Profile): Promise<null> {
   return call<null>("profile.set", [profile]);
 }
 

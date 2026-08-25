@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, GripVertical } from "lucide-react";
 
 import EditableText from "@/components/EditableText";
+import ProfileNode from "@/components/ProfileNode";
 import {
   Collapsible,
   CollapsibleContent,
@@ -333,13 +334,13 @@ export default function MasterStore() {
     );
   }, []);
 
-  if (error) return <Note>{error}</Note>;
-  if (!sections) return <Note>Loading…</Note>;
-  if (sections.length === 0) return <Note>The Master Store is empty.</Note>;
-
   return (
     <div>
-      {sections.map((section) => (
+      <ProfileNode />
+      {error && <Note>{error}</Note>}
+      {!error && !sections && <Note>Loading…</Note>}
+      {sections?.length === 0 && <Note>No Sections yet.</Note>}
+      {sections?.map((section) => (
         <SectionNode key={section.name} section={section} />
       ))}
     </div>
