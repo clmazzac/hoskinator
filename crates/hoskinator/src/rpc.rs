@@ -62,6 +62,8 @@ pub const RESUME_IO: i32 = -32018;
 pub const RESUME_INVALID: i32 = -32019;
 /// The resume section has no entry at the index a placement named.
 pub const RESUME_NO_SUCH_ENTRY: i32 = -32020;
+/// The picker named a theme rendercv does not ship.
+pub const RESUME_UNKNOWN_THEME: i32 = -32026;
 /// No resume repository was configured to render.
 pub const RENDER_UNAVAILABLE: i32 = -32021;
 /// The current branch has no resume.yaml to render.
@@ -240,6 +242,15 @@ pub trait ResumeRpc {
     async fn resume_place_entry(&self, section: String, fields: serde_json::Value)
     -> RpcResult<()>;
 
+    #[method(name = "resume.theme")]
+    async fn resume_theme(&self) -> RpcResult<Option<String>>;
+
+    #[method(name = "resume.themes")]
+    async fn resume_themes(&self) -> RpcResult<Vec<String>>;
+
+    #[method(name = "resume.set_theme")]
+    async fn resume_set_theme(&self, theme: String) -> RpcResult<()>;
+
     #[method(name = "resume.place_section")]
     async fn resume_place_section(&self, section: String) -> RpcResult<()>;
 
@@ -280,6 +291,9 @@ pub trait ResumeRpc {
 pub trait RenderRpc {
     #[method(name = "render.available")]
     async fn render_available(&self) -> RpcResult<bool>;
+
+    #[method(name = "render.preview")]
+    async fn render_preview(&self) -> RpcResult<RenderedPdf>;
 
     #[method(name = "render.run")]
     async fn render_run(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedPdf>;
@@ -548,6 +562,22 @@ impl ResumeRpcServer for ResumeApi {
             .await
     }
 
+    async fn resume_theme(&self) -> RpcResult<Option<String>> {
+        let path = self.repository_path()?;
+        self.operation(move || resume::theme(&path)).await
+    }
+
+    async fn resume_themes(&self) -> RpcResult<Vec<String>> {
+        Ok(resume::THEMES.iter().map(|name| name.to_string()).collect())
+    }
+
+    async fn resume_set_theme(&self, theme: String) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::set_theme(&path, &theme, &profile))
+            .await
+    }
+
     async fn resume_place_section(&self, section: String) -> RpcResult<()> {
         let path = self.repository_path()?;
         let profile = self.store.profile().await.map_err(store_rpc_error)?;
@@ -629,6 +659,14 @@ impl RenderApi {
 impl RenderRpcServer for RenderApi {
     async fn render_available(&self) -> RpcResult<bool> {
         blocking(render::is_available).await
+    }
+
+    async fn render_preview(&self) -> RpcResult<RenderedPdf> {
+        self.render_run(
+            crate::serve::preview_directory(),
+            crate::serve::PREVIEW_FILE.to_string(),
+        )
+        .await
     }
 
     async fn render_run(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedPdf> {
@@ -873,6 +911,7 @@ fn resume_code_for(error: &ResumeError) -> i32 {
         ResumeError::NotFound { .. } => RESUME_NOT_FOUND,
         ResumeError::Invalid(_) => RESUME_INVALID,
         ResumeError::NoSuchEntry { .. } => RESUME_NO_SUCH_ENTRY,
+        ResumeError::UnknownTheme { .. } => RESUME_UNKNOWN_THEME,
         ResumeError::Read { .. }
         | ResumeError::Write { .. }
         | ResumeError::Parse { .. }

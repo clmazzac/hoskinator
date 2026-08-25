@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { renderPreview } from "@/rpc";
 import {
   Dialog,
   DialogClose,
@@ -26,11 +27,14 @@ const FORMATS = [{ value: "pdf", label: "PDF", extension: "pdf" }];
 export default function ExportDialog({
   open,
   onOpenChange,
+  onRender,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onRender: () => void;
 }) {
   const [name, setName] = useState("resume");
+  const [busy, setBusy] = useState(false);
   const [format, setFormat] = useState("pdf");
   const extension =
     FORMATS.find((candidate) => candidate.value === format)?.extension ?? "pdf";
@@ -76,10 +80,26 @@ export default function ExportDialog({
         </div>
 
         <DialogFooter>
-          <DialogClose
-            render={<Button variant="ghost">Cancel</Button>}
-          />
-          <Button disabled>Export</Button>
+          <DialogClose render={<Button variant="ghost">Cancel</Button>} />
+          <Button
+            disabled={busy || name.trim() === ""}
+            onClick={() => {
+              setBusy(true);
+              renderPreview().then(
+                () => {
+                  setBusy(false);
+                  onOpenChange(false);
+                  onRender();
+                  window.location.href = `/preview.pdf?download=${encodeURIComponent(
+                    `${name}.${extension}`,
+                  )}`;
+                },
+                () => setBusy(false),
+              );
+            }}
+          >
+            {busy ? "Rendering…" : "Export"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

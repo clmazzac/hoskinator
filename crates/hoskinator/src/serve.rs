@@ -11,7 +11,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use hoskinator_core::home::{Home, HomeError};
 use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
@@ -25,6 +25,17 @@ use crate::rpc::{
 
 /// Port the daemon binds unless told otherwise.
 pub const DEFAULT_PORT: u16 = 8737;
+/// Path the rendered PDF is served from, so a browser can show what rendercv produced.
+pub const PREVIEW_PATH: &str = "/preview.pdf";
+
+/// Where renders land: the platform temp directory, not the resume repository.
+///
+/// A render inside the repository would dirty `repository.status` on every keystroke of an
+/// auto-render, and Home holds the store alone (`docs/decisions/home-and-config.md`).
+pub fn preview_directory() -> PathBuf {
+    std::env::temp_dir().join("hoskinator")
+}
+
 /// Path the JSON-RPC contract is served from.
 const RPC_PATH: &str = "/rpc";
 
@@ -81,10 +92,44 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
 
     Ok(Router::new()
         .route(RPC_PATH, post(dispatch))
+        .route(PREVIEW_PATH, get(preview))
         .fallback(crate::web::asset)
         .layer(axum::middleware::from_fn(authenticate))
         .with_state(Arc::new(module)))
 }
+
+/// Serves the most recent render. `?download=<name>` asks the browser to save it under that name.
+async fn preview(axum::extract::Query(query): axum::extract::Query<PreviewQuery>) -> Response {
+    let path = preview_directory().join(PREVIEW_FILE);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return (StatusCode::NOT_FOUND, "nothing has been rendered yet").into_response();
+    };
+
+    let disposition = match query.download.as_deref() {
+        Some(name) if !name.is_empty() => {
+            format!("attachment; filename=\"{}\"", name.replace('"', ""))
+        }
+        _ => "inline".to_string(),
+    };
+
+    (
+        [
+            (header::CONTENT_TYPE, "application/pdf".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PreviewQuery {
+    download: Option<String>,
+}
+
+/// The file every render writes, replaced each time.
+pub const PREVIEW_FILE: &str = "preview.pdf";
 
 /// Hands the request body to jsonrpsee and returns whatever it answers.
 async fn dispatch(State(module): State<Arc<RpcModule<()>>>, body: String) -> Response {

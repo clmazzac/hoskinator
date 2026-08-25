@@ -20,6 +20,26 @@ const SECTIONS_KEY: &str = "sections";
 /// The entry key holding an entry's placed wordings.
 const HIGHLIGHTS_KEY: &str = "highlights";
 
+/// The document key holding how the resume looks (ADR-0006, as amended).
+const DESIGN_KEY: &str = "design";
+
+/// The `design:` key naming the theme.
+const THEME_KEY: &str = "theme";
+
+/// The themes rendercv ships. The picker offers these and nothing else, so every document the
+/// engine writes stays inside the closed union the schema models (ADR-0006, as amended).
+pub const THEMES: &[&str] = &[
+    "classic",
+    "ember",
+    "engineeringclassic",
+    "engineeringresumes",
+    "harvard",
+    "ink",
+    "moderncv",
+    "opal",
+    "sb2nov",
+];
+
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeError {
     #[error("no resume.yaml at {path}")]
@@ -60,6 +80,8 @@ pub enum ResumeError {
     Invalid(Vec<String>),
     #[error("section {section} has no entry at index {index}")]
     NoSuchEntry { section: String, index: usize },
+    #[error("rendercv has no theme called {theme}")]
+    UnknownTheme { theme: String },
 }
 
 /// Reads the raw text of `resume.yaml` from a repository's working directory.
@@ -299,6 +321,65 @@ pub fn place_entry(
     };
 
     apply(repository_path, &document, &[create, as_block], profile)
+}
+
+/// The theme the resume renders with, if it names one.
+pub fn theme(repository_path: &Path) -> Result<Option<String>, ResumeError> {
+    let path = repository_path.join(FILENAME);
+    let text = read(repository_path)?;
+    let document: yaml_serde::Value =
+        yaml_serde::from_str(&text).map_err(|source| ResumeError::Decode { path, source })?;
+
+    Ok(document
+        .get(DESIGN_KEY)
+        .and_then(|design| design.get(THEME_KEY))
+        .and_then(|theme| theme.as_str())
+        .map(str::to_string))
+}
+
+/// Sets the resume's theme, adding a `design:` block if it has none.
+pub fn set_theme(
+    repository_path: &Path,
+    theme: &str,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    if !THEMES.contains(&theme) {
+        return Err(ResumeError::UnknownTheme {
+            theme: theme.to_string(),
+        });
+    }
+
+    let (_, document) = load(repository_path)?;
+    let design_route = yamlpath::Route::default().with_key(DESIGN_KEY);
+    let theme_route = design_route.clone().with_key(THEME_KEY);
+    let named = yaml_serde::Value::String(theme.to_string());
+
+    let patch = if document.query_exists(&theme_route) {
+        yamlpatch::Patch {
+            route: theme_route,
+            operation: yamlpatch::Op::Replace(named),
+        }
+    } else if document.query_exists(&design_route) {
+        yamlpatch::Patch {
+            route: design_route,
+            operation: yamlpatch::Op::Add {
+                key: THEME_KEY.to_string(),
+                value: named,
+            },
+        }
+    } else {
+        let mut design = yaml_serde::Mapping::new();
+        design.insert(yaml_serde::Value::String(THEME_KEY.to_string()), named);
+        yamlpatch::Patch {
+            route: yamlpath::Route::default(),
+            operation: yamlpatch::Op::Add {
+                key: DESIGN_KEY.to_string(),
+                value: yaml_serde::Value::Mapping(design),
+            },
+        }
+    };
+
+    apply(repository_path, &document, &[patch], profile)
 }
 
 /// Adds an empty section to the resume, leaving one that already exists alone.

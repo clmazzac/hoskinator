@@ -322,3 +322,27 @@ export function moveResumeBullet(
 export function placeSection(section: string): Promise<null> {
   return call<null>("resume.place_section", [section]);
 }
+
+export interface RenderedPdf {
+  path: string;
+}
+
+export function renderAvailable(): Promise<boolean> {
+  return call<boolean>("render.available", []);
+}
+
+export function renderPreview(): Promise<RenderedPdf> {
+  return call<RenderedPdf>("render.preview", []);
+}
+
+export function resumeTheme(): Promise<string | null> {
+  return call<string | null>("resume.theme", []);
+}
+
+export function resumeThemes(): Promise<string[]> {
+  return call<string[]>("resume.themes", []);
+}
+
+export function setResumeTheme(theme: string): Promise<null> {
+  return call<null>("resume.set_theme", [theme]);
+}

@@ -48,9 +48,15 @@ function ToolbarButton({
 
 export default function RenderToolbar({
   onCollapse,
+  onRender,
+  rendering = false,
+  disabled = false,
   problemCount = 0,
 }: {
   onCollapse: () => void;
+  onRender: () => void;
+  rendering?: boolean;
+  disabled?: boolean;
   problemCount?: number;
 }) {
   const [exporting, setExporting] = useState(false);
@@ -65,8 +71,13 @@ export default function RenderToolbar({
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
       <div className="flex items-center">
-        <Button size="sm" className="h-7 rounded-r-none px-3">
-          Render
+        <Button
+          size="sm"
+          className="h-7 rounded-r-none px-3"
+          onClick={onRender}
+          disabled={disabled || rendering}
+        >
+          {rendering ? "Rendering…" : "Render"}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -91,7 +102,7 @@ export default function RenderToolbar({
               />
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Render from scratch</DropdownMenuItem>
+            <DropdownMenuItem onClick={onRender}>Render now</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -110,7 +121,7 @@ export default function RenderToolbar({
       <ToolbarButton label="Export" onClick={() => setExporting(true)}>
         <Download className="size-4" />
       </ToolbarButton>
-      <ExportDialog open={exporting} onOpenChange={setExporting} />
+      <ExportDialog open={exporting} onOpenChange={setExporting} onRender={onRender} />
 
       <div className="flex-1" />
 

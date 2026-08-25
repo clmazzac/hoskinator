@@ -13,6 +13,9 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: { "/rpc": "http://127.0.0.1:8737" },
+    proxy: {
+      "/rpc": "http://127.0.0.1:8737",
+      "/preview.pdf": "http://127.0.0.1:8737",
+    },
   },
 });

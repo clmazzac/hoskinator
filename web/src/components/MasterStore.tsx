@@ -15,6 +15,8 @@ import {
   isListField,
 } from "@/entryFields";
 import {
+  joinElements,
+  splitElements,
   startEntryDrag,
   startSectionDrag,
   startWordingDrag,
@@ -160,6 +162,43 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
   );
 }
 
+// A one-line entry keeps its elements in one comma-separated string. Each is shown as its own
+// row so it drags and edits like a Bullet; all three gestures rewrite the string.
+function ElementNode({
+  entry,
+  elements,
+  index,
+  onEdited,
+}: {
+  entry: Entry;
+  elements: string[];
+  index: number;
+  onEdited: () => void;
+}) {
+  const held = (entry.fields ?? {}) as Record<string, unknown>;
+
+  const rewrite = (next: string[]) =>
+    updateEntry(entry.id, {
+      ...held,
+      details: joinElements(next.filter(Boolean)),
+    }).then(onEdited);
+
+  return (
+    <div className="flex items-start gap-1 py-1 pr-2 pl-7 hover:bg-muted/40">
+      <Grip onDragStart={(event) => startWordingDrag(event, elements[index])} />
+      <span className="mt-1.5 ml-1 size-1 shrink-0 rounded-full bg-muted-foreground" />
+      <EditableText
+        value={elements[index]}
+        onCommit={(next) =>
+          rewrite(elements.map((held, at) => (at === index ? next : held)))
+        }
+        placeholder="(empty — commit to remove)"
+        className="flex-1 text-xs leading-snug"
+      />
+    </div>
+  );
+}
+
 // Every field the entry's type carries, editable. `entry.update` replaces the whole bag, so a
 // commit merges the one changed key back into what is already there.
 function EntryFields({ entry, onEdited }: { entry: Entry; onEdited: () => void }) {
@@ -179,7 +218,9 @@ function EntryFields({ entry, onEdited }: { entry: Entry; onEdited: () => void }
 
   return (
     <div className="grid gap-0.5 py-1 pr-2 pl-12">
-      {names.map((name) => {
+      {names
+        .filter((name) => !(entry.entry_type === "one-line" && name === "details"))
+        .map((name) => {
         const value = entry.entry_type === "text" ? entry.fields : held[name];
         const written = Array.isArray(value)
           ? value.join("\n")
@@ -199,7 +240,7 @@ function EntryFields({ entry, onEdited }: { entry: Entry; onEdited: () => void }
             />
           </div>
         );
-      })}
+        })}
     </div>
   );
 }
@@ -210,6 +251,11 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
   const hasBullets = carriesBullets(entry.entry_type);
   const load = useCallback(() => listBullets(entry.id), [entry.id]);
   const { value: bullets, error, reload } = useLazy<Bullet[]>(open && hasBullets, load);
+  const details = ((entry.fields ?? {}) as Record<string, unknown>).details;
+  const elements =
+    entry.entry_type === "one-line" && typeof details === "string"
+      ? splitElements(details)
+      : [];
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -230,6 +276,15 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
 
       <CollapsibleContent>
         <EntryFields entry={entry} onEdited={onEdited} />
+        {elements.map((_, index) => (
+          <ElementNode
+            key={index}
+            entry={entry}
+            elements={elements}
+            index={index}
+            onEdited={onEdited}
+          />
+        ))}
         {error && <Note>{error}</Note>}
         {hasBullets && bullets?.length === 0 && <Note>No bullets.</Note>}
         {bullets?.map((bullet) => (

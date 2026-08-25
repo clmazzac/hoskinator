@@ -1,11 +1,11 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { PanelRightOpen } from "lucide-react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 
 import MasterStore from "@/components/MasterStore";
 import ResumeOutline from "@/components/ResumeOutline";
 import MenuBar from "@/components/MenuBar";
-import RenderToolbar from "@/components/RenderToolbar";
+import RenderPanel, { type RenderHandle } from "@/components/RenderPanel";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -29,15 +29,9 @@ function Column({ children }: { children: ReactNode }) {
   );
 }
 
-// Placeholder marking a column whose contents are not built yet.
-function Unbuilt({ children }: { children: ReactNode }) {
-  return (
-    <p className="p-3 font-mono text-xs text-muted-foreground">{children}</p>
-  );
-}
-
 export default function ResumeEditor() {
   const renderPanel = usePanelRef();
+  const render = useRef<RenderHandle>(null);
   const [renderCollapsed, setRenderCollapsed] = useState(false);
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: LAYOUT_ID,
@@ -46,7 +40,7 @@ export default function ResumeEditor() {
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
-      <MenuBar />
+      <MenuBar onThemeChanged={() => render.current?.run()} />
       <div className="flex min-h-0 flex-1">
         <ResizablePanelGroup
           id={LAYOUT_ID}
@@ -82,12 +76,10 @@ export default function ResumeEditor() {
             panelRef={renderPanel}
             onResize={(size) => setRenderCollapsed(size.asPercentage === 0)}
           >
-            <div className="flex h-full min-w-0 flex-col">
-              <RenderToolbar onCollapse={() => renderPanel.current?.collapse()} />
-              <ScrollArea className="min-h-0 flex-1">
-                <Unbuilt>The rendercv output for the current branch.</Unbuilt>
-              </ScrollArea>
-            </div>
+            <RenderPanel
+              handle={render}
+              onCollapse={() => renderPanel.current?.collapse()}
+            />
           </ResizablePanel>
         </ResizablePanelGroup>
 
