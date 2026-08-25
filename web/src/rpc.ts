@@ -380,3 +380,130 @@ export function resumeThemes(): Promise<string[]> {
 export function setResumeTheme(theme: string): Promise<null> {
   return call<null>("resume.set_theme", [theme]);
 }
+
+// ---------------------------------------------------------------------------
+// Repository, archetypes, and applications
+// ---------------------------------------------------------------------------
+
+export interface Branch {
+  name: string;
+  commit_id: string | null;
+  is_head: boolean;
+}
+
+export interface RepositoryState {
+  head: { branch: string | null; commit_id: string | null } | null;
+  branches: Branch[];
+}
+
+export type Lineage =
+  | { kind: "trunk" }
+  | { kind: "archetype"; slug: string }
+  | { kind: "application"; slug: string; target: string }
+  | { kind: "loose" };
+
+export interface WorkspaceStatus {
+  gh_installed: boolean;
+  github_login: string | null;
+  repository_path: string | null;
+  repository_ready: boolean;
+  remote_url: string | null;
+}
+
+export interface MergeOutcome {
+  branch: string;
+  from: string;
+  kind: string;
+  commit_id: string | null;
+}
+
+export interface Application {
+  id: number;
+  company: string;
+  position: string;
+  status: string;
+  date_applied: string | null;
+  listing_url: string | null;
+  resume_branch: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export type NewApplication = Omit<Application, "id" | "created_at">;
+
+export function workspaceStatus(): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.status", []);
+}
+
+export function ownedRepositories(): Promise<string[]> {
+  return call<string[]>("workspace.repositories", []);
+}
+
+export function createGithubRepository(
+  name: string,
+  destination: string,
+): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.create_github", [name, destination]);
+}
+
+export function connectRepository(
+  source: string,
+  destination: string,
+): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.connect", [source, destination]);
+}
+
+export function pushBranch(branch: string): Promise<null> {
+  return call<null>("workspace.push", [branch]);
+}
+
+export function branchName(slug: string, target: string | null): Promise<string> {
+  return call<string>("workspace.names", [slug, target]);
+}
+
+export function repositoryState(): Promise<RepositoryState> {
+  return call<RepositoryState>("repository.init", []);
+}
+
+export function createBranch(name: string, from: string | null): Promise<Branch> {
+  return call<Branch>("repository.branch.create", [{ name, from }]);
+}
+
+export function checkoutBranch(branch: string): Promise<RepositoryState> {
+  return call<RepositoryState>("repository.checkout", [{ branch }]);
+}
+
+export function commitResume(message: string): Promise<unknown> {
+  return call("repository.commit", [{ message }]);
+}
+
+export function mergeBranch(from: string): Promise<MergeOutcome> {
+  return call<MergeOutcome>("repository.merge", [from]);
+}
+
+export function repositoryStatus(): Promise<{ entries: unknown[] }> {
+  return call<{ entries: unknown[] }>("repository.status", []);
+}
+
+export function listApplications(): Promise<Application[]> {
+  return call<Application[]>("application.list", []);
+}
+
+export function applicationStatuses(): Promise<string[]> {
+  return call<string[]>("application.statuses", []);
+}
+
+export function createApplication(application: NewApplication): Promise<Application> {
+  return call<Application>("application.create", [application]);
+}
+
+export function updateApplication(
+  id: number,
+  application: NewApplication,
+): Promise<Application> {
+  return call<Application>("application.update", [id, application]);
+}
+
+export function deleteApplication(id: number): Promise<null> {
+  return call<null>("application.delete", [id]);
+}

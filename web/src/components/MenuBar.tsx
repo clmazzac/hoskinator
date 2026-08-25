@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, Moon, Redo2, Sun, Undo2 } from "lucide-react";
+import { ChevronDown, Home, Moon, Redo2, Sun, Undo2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useHistory, useHistoryShortcuts } from "@/lib/history";
+import { go } from "@/lib/route";
 import { isDark, setDark } from "@/lib/theme";
 import {
   resumeDesign,
@@ -56,6 +57,16 @@ export default function MenuBar({
 
   return (
     <div className="flex h-8 shrink-0 items-center gap-0.5 border-b px-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-2 text-xs font-normal"
+        onClick={() => go("home")}
+        title="Back to your resumes"
+      >
+        <Home className="size-3.5" />
+      </Button>
+
       <Button
         variant="ghost"
         size="sm"
