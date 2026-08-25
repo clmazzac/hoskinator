@@ -3,6 +3,10 @@
 Decisions shaping the web UI in `web/`, newest last. Repo-wide decisions live in `CLAUDE.md`;
 architectural ones in `docs/adr/`.
 
+This file records how the code got built. What the product is meant to be is a separate question:
+the resume editor's design is in `docs/design/resume-editor.md`, and product truth is in
+`PRODUCT.md` at the repo root.
+
 ## React + Vite + TypeScript (Slice 1, #2)
 
 **Why:** chosen for Slice 9's two-panel assembly screen, not Slice 1's form — it has the deepest
