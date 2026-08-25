@@ -35,3 +35,6 @@ coverage/
 tmp/
 temp/
 .cache/
+
+# Worktrees created for isolated agent runs.
+.claude/worktrees/
