@@ -1,8 +1,7 @@
 //! Setting up the resume repository, and the GitHub account it lives on.
 //!
 //! GitHub is reached through the `gh` CLI when setting the repository up, and through a
-//! personal access token once one is authorized: pushes authenticate with the stored token,
-//! while setup keeps using the account the user is already signed in with.
+//! stored personal access token for pushes.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -106,9 +105,6 @@ pub fn connect_github(source: &str, destination: &Path) -> Result<PathBuf, Works
 }
 
 /// Pushes the current branch to `origin`, setting upstream the first time.
-///
-/// When a GitHub token is stored, it rides in a per-invocation credential helper, so pushes
-/// over HTTPS authenticate without the token landing in the repository's configuration.
 pub fn push(repository_path: &Path, branch: &str) -> Result<(), WorkspaceError> {
     push_refs(
         repository_path,
@@ -121,7 +117,7 @@ pub fn push(repository_path: &Path, branch: &str) -> Result<(), WorkspaceError> 
     )
 }
 
-/// Pushes every local branch, so a newly connected repository receives the whole resume.
+/// Pushes every local branch to `origin`.
 pub fn push_all(repository_path: &Path) -> Result<(), WorkspaceError> {
     push_refs(
         repository_path,

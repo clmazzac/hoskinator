@@ -759,10 +759,7 @@ pub fn move_section(repository_path: &Path, from: usize, to: usize) -> Result<()
 
     // A comment directly above the moved key belongs to that section: shift the boundary
     // between it and the previous block, so the comment lines travel with their section.
-    loop {
-        let Some(newline) = source[..starts[from]].rfind('\n') else {
-            break;
-        };
+    while let Some(newline) = source[..starts[from]].rfind('\n') {
         let line = &source[newline + 1..starts[from]];
         if line.trim_start().is_empty() || !line.trim_start().starts_with('#') {
             break;

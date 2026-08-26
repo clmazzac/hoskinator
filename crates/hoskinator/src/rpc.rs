@@ -316,7 +316,7 @@ pub trait WorkspaceRpc {
     async fn workspace_sheet_csv(&self) -> RpcResult<String>;
 }
 
-/// The GitHub account a resume repository syncs to, and the repository itself.
+/// Whether a GitHub account is connected, and its login.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GithubStatus {
     pub connected: bool,

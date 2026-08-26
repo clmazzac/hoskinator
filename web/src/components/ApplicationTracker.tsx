@@ -92,6 +92,7 @@ export default function ApplicationTracker({
       listing_url: null,
       resume_branch: null,
       notes: null,
+      jd_text: null,
     }).then(onChanged, (failure: Error) => setError(failure.message));
 
   return (
@@ -167,6 +168,7 @@ export default function ApplicationTracker({
               <th className="px-2 py-1.5 font-medium">Listing</th>
               <th className="px-2 py-1.5 font-medium">Resume</th>
               <th className="px-2 py-1.5 font-medium">Notes</th>
+              <th className="px-2 py-1.5 font-medium">Job description</th>
               <th className="w-8" />
             </tr>
           </thead>
@@ -270,6 +272,14 @@ export default function ApplicationTracker({
                     value={application.notes ?? ""}
                     onCommit={(notes) => save(application, { notes: notes || null })}
                     placeholder="—"
+                  />
+                </Cell>
+                <Cell className="min-w-48">
+                  <EditableText
+                    value={application.jd_text ?? ""}
+                    onCommit={(jd_text) => save(application, { jd_text: jd_text || null })}
+                    placeholder="Paste the posting"
+                    multiline
                   />
                 </Cell>
                 <Cell>

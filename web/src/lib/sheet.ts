@@ -1,9 +1,7 @@
 // Moving the tracker in and out of a spreadsheet.
 //
 // Google Sheets copies to the clipboard as tab-separated rows and exports as CSV, so the importer
-// accepts both. Columns are matched by their heading, which is what a user's own sheet actually
-// carries — the screenshot this was built from names them Company, Position, Date Applied,
-// Application Status, Listing Page, Resume, and Notes.
+// accepts both. Columns are matched by their heading.
 
 import type { NewApplication } from "@/rpc";
 
@@ -16,6 +14,7 @@ const COLUMNS: Record<keyof NewApplication, string[]> = {
   listing_url: ["listing page", "listing", "url", "link", "posting"],
   resume_branch: ["resume branch", "branch", "resume"],
   notes: ["notes", "note", "comments"],
+  jd_text: ["job description", "description", "posting", "jd"],
 };
 
 const STATUSES = ["draft", "applied", "interview", "offer", "rejected"];
@@ -130,6 +129,7 @@ export function parseSheet(text: string): NewApplication[] {
     listing_url: columnFor("listing_url"),
     resume_branch: columnFor("resume_branch"),
     notes: columnFor("notes"),
+    jd_text: columnFor("jd_text"),
   };
 
   const read = (row: string[], index: number) =>
@@ -146,6 +146,7 @@ export function parseSheet(text: string): NewApplication[] {
       listing_url: read(row, at.listing_url) || null,
       resume_branch: read(row, at.resume_branch) || null,
       notes: read(row, at.notes) || null,
+      jd_text: read(row, at.jd_text) || null,
     }));
 }
 
@@ -165,13 +166,14 @@ export function toCsv(applications: NewApplication[]): string {
       one.listing_url,
       one.resume_branch,
       one.notes,
+      one.jd_text,
     ]
       .map(quote)
       .join(","),
   );
 
   return [
-    "Company,Position,Date Applied,Application Status,Listing Page,Resume,Notes",
+    "Company,Position,Date Applied,Application Status,Listing Page,Resume,Notes,Job Description",
     ...rows,
   ].join("\n");
 }

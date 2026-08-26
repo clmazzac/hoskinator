@@ -444,6 +444,7 @@ export interface Application {
   listing_url: string | null;
   resume_branch: string | null;
   notes: string | null;
+  jd_text: string | null;
   created_at: string;
 }
 

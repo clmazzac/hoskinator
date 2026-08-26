@@ -30,6 +30,8 @@ pub struct Application {
     /// The branch whose resume was sent, if one was.
     pub resume_branch: Option<String>,
     pub notes: Option<String>,
+    /// The pasted posting this application answers.
+    pub jd_text: Option<String>,
     pub created_at: String,
 }
 
@@ -44,6 +46,7 @@ pub struct NewApplication {
     pub listing_url: Option<String>,
     pub resume_branch: Option<String>,
     pub notes: Option<String>,
+    pub jd_text: Option<String>,
 }
 
 impl Store {

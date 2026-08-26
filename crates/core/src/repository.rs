@@ -1021,9 +1021,7 @@ mod tests {
             .unwrap();
 
         assert!(repository.delete_branch("missing").is_err());
-        // The open branch is refused, whatever it is.
         assert!(repository.delete_branch("divergent").is_err());
-        // A branch at a commit another branch reaches goes quietly.
         repository.delete_branch("spare").unwrap();
         assert!(
             repository
@@ -1033,7 +1031,6 @@ mod tests {
                 .iter()
                 .all(|branch| branch.name != "spare")
         );
-        // A branch whose commits nothing else reaches is refused.
         assert!(matches!(
             repository.delete_branch("divergent"),
             Err(RepositoryError::Conflict { .. })

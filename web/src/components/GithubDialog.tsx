@@ -29,7 +29,7 @@ export default function GithubDialog({
 }: {
   status: GithubStatus | null;
   onOpenChange: (open: boolean) => void;
-  /** Runs whatever closed the dialog needs refreshed — connection state, tree, remote. */
+  /** Refreshes whatever the dialog changed — connection state, tree, remote. */
   onChanged: () => void;
 }) {
   const [step, setStep] = useState<"token" | "repository">(

@@ -136,7 +136,7 @@ pub fn verify(token: &str) -> Result<String, GithubError> {
 }
 
 /// The login of the stored token; `None` when no token is stored, an error when it stopped
-/// working (so a stale token is visible rather than silently ignored).
+/// working.
 pub fn status() -> Result<Option<String>, GithubError> {
     match read_token()? {
         None => Ok(None),

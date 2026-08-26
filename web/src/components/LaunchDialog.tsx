@@ -115,6 +115,7 @@ export default function LaunchDialog({
       listing_url: null,
       resume_branch: null,
       notes: null,
+      jd_text: null,
     }).then(
       () => {
         setBusy(false);

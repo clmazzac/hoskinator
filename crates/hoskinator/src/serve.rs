@@ -992,7 +992,7 @@ mod tests {
         let (dir, router) = repository_router().await;
         let repo = dir.path().join("resume");
         std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(&repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
 
         call(
             router.clone(),
@@ -1032,7 +1032,7 @@ mod tests {
         let (dir, router) = repository_router().await;
         let repo = dir.path().join("resume");
         std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(&repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
 
         let missing = call(
             router,
