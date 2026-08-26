@@ -483,6 +483,8 @@ export default function ResumeOutline() {
               dropEntry(section.name, dragged.id);
             }}
           >
+            {/* The lines wrap the header row; inside it they would sit beside the words. */}
+            {sectionEdge?.name === section.name && sectionEdge.edge === "before" && <DropLine />}
             <div
               className="group flex cursor-grab items-center gap-1.5 border-b px-2 py-1.5 active:cursor-grabbing"
               draggable
@@ -512,10 +514,9 @@ export default function ResumeOutline() {
                 if (to !== from && to !== from + 1) run(() => moveResumeSection(from, to));
               }}
             >
-              {sectionEdge?.name === section.name && sectionEdge.edge === "before" && <DropLine />}
               <span className="text-xs font-semibold">{section.name}</span>
-              {sectionEdge?.name === section.name && sectionEdge.edge === "after" && <DropLine />}
             </div>
+            {sectionEdge?.name === section.name && sectionEdge.edge === "after" && <DropLine />}
             {section.entries.map((entry) => (
               <EntryNode
                 key={`${entry.index}-${JSON.stringify(entry.fields)}`}
