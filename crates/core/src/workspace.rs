@@ -1,8 +1,8 @@
 //! Setting up the resume repository, and the GitHub account it lives on.
 //!
-//! GitHub is reached through the `gh` CLI rather than an OAuth flow of our own: the user is
-//! already logged in there, the token never touches this process, and creating a private
-//! repository is one documented command.
+//! GitHub is reached through the `gh` CLI when setting the repository up, and through a
+//! personal access token once one is authorized: pushes authenticate with the stored token,
+//! while setup keeps using the account the user is already signed in with.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -106,13 +106,77 @@ pub fn connect_github(source: &str, destination: &Path) -> Result<PathBuf, Works
 }
 
 /// Pushes the current branch to `origin`, setting upstream the first time.
+///
+/// When a GitHub token is stored, it rides in a per-invocation credential helper, so pushes
+/// over HTTPS authenticate without the token landing in the repository's configuration.
 pub fn push(repository_path: &Path, branch: &str) -> Result<(), WorkspaceError> {
-    run(
-        "git",
-        &["push", "--set-upstream", "origin", branch],
+    push_refs(
         repository_path,
+        &[
+            "push".into(),
+            "--set-upstream".into(),
+            "origin".into(),
+            branch.into(),
+        ],
     )
-    .map(|_| ())
+}
+
+/// Pushes every local branch, so a newly connected repository receives the whole resume.
+pub fn push_all(repository_path: &Path) -> Result<(), WorkspaceError> {
+    push_refs(
+        repository_path,
+        &[
+            "push".into(),
+            "origin".into(),
+            "refs/heads/*:refs/heads/*".into(),
+        ],
+    )
+}
+
+fn push_refs(repository_path: &Path, arguments: &[String]) -> Result<(), WorkspaceError> {
+    let mut command = Command::new("git");
+    command
+        .current_dir(repository_path)
+        .env("GIT_TERMINAL_PROMPT", "0");
+
+    // The `-c` option must come before the subcommand. The helper reads the token from the
+    // environment, so the token never appears on the command line or in the repository's own
+    // configuration.
+    if let Ok(Some(token)) = crate::github::read_token() {
+        command.arg("-c").arg(
+            "credential.helper=!f() { printf 'username=x-access-token\\npassword=%s\\n' \"$HOSKINATOR_GITHUB_TOKEN\"; }; f",
+        );
+        command.env("HOSKINATOR_GITHUB_TOKEN", token);
+    }
+    command.args(arguments);
+
+    let output = command.output().map_err(|source| WorkspaceError::Spawn {
+        program: "git".to_string(),
+        source,
+    })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+    let mut reported = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if reported.is_empty() {
+        reported = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    }
+    Err(WorkspaceError::Command(reported))
+}
+
+/// Points `origin` at `url`, whether or not a remote is already set.
+pub fn connect_remote(repository_path: &Path, url: &str) -> Result<(), WorkspaceError> {
+    if remote(repository_path).is_some() {
+        run(
+            "git",
+            &["remote", "set-url", "origin", url],
+            repository_path,
+        )
+        .map(|_| ())
+    } else {
+        run("git", &["remote", "add", "origin", url], repository_path).map(|_| ())
+    }
 }
 
 /// Every repository the signed-in account owns, newest first.

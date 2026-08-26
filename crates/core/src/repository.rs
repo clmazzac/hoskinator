@@ -401,7 +401,10 @@ impl ResumeRepository {
         let path = workdir.join(relative_path);
         std::fs::write(&path, contents).map_err(|source| RepositoryError::Io { path, source })?;
 
-        let mut index = self.repository.index().map_err(RepositoryError::Operation)?;
+        let mut index = self
+            .repository
+            .index()
+            .map_err(RepositoryError::Operation)?;
         index
             .add_path(Path::new(relative_path))
             .map_err(RepositoryError::Operation)?;
@@ -934,20 +937,27 @@ mod tests {
     #[test]
     fn a_staged_write_replaces_the_previous_contents() {
         let (dir, repository) = seeded();
-        repository.write_staged("applications.csv", "first\n").unwrap();
+        repository
+            .write_staged("applications.csv", "first\n")
+            .unwrap();
         repository
             .commit(CommitRequest {
                 message: "first sync".into(),
             })
             .unwrap();
 
-        repository.write_staged("applications.csv", "second\n").unwrap();
+        repository
+            .write_staged("applications.csv", "second\n")
+            .unwrap();
 
         assert_eq!(
             std::fs::read_to_string(dir.path().join("applications.csv")).unwrap(),
             "second\n"
         );
-        assert_eq!(repository.status().unwrap().entries[0].path, "applications.csv");
+        assert_eq!(
+            repository.status().unwrap().entries[0].path,
+            "applications.csv"
+        );
     }
 
     #[test]

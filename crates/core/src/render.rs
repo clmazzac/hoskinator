@@ -352,7 +352,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         assert!(matches!(
-            render_docx(NOT_INSTALLED, NOT_INSTALLED, dir.path(), Path::new("out"), "Resume"),
+            render_docx(
+                NOT_INSTALLED,
+                NOT_INSTALLED,
+                dir.path(),
+                Path::new("out"),
+                "Resume"
+            ),
             Err(RenderError::ResumeNotFound { .. })
         ));
     }
@@ -362,7 +368,13 @@ mod tests {
         let dir = repository();
 
         assert!(matches!(
-            render_docx(NOT_INSTALLED, "pandoc", dir.path(), Path::new("out"), "Resume"),
+            render_docx(
+                NOT_INSTALLED,
+                "pandoc",
+                dir.path(),
+                Path::new("out"),
+                "Resume"
+            ),
             Err(RenderError::ProgramMissing)
         ));
     }
@@ -373,7 +385,13 @@ mod tests {
         let dir = repository();
 
         assert!(matches!(
-            render_docx("false", NOT_INSTALLED, dir.path(), Path::new("out"), "Resume"),
+            render_docx(
+                "false",
+                NOT_INSTALLED,
+                dir.path(),
+                Path::new("out"),
+                "Resume"
+            ),
             Err(RenderError::Failed { code: Some(1), .. })
         ));
     }
@@ -384,10 +402,19 @@ mod tests {
         let dir = repository();
 
         // "true" exits 0 without writing the markdown rendercv would have.
-        let error = render_docx("true", NOT_INSTALLED, dir.path(), Path::new("out"), "Resume")
-            .unwrap_err();
+        let error = render_docx(
+            "true",
+            NOT_INSTALLED,
+            dir.path(),
+            Path::new("out"),
+            "Resume",
+        )
+        .unwrap_err();
 
-        assert!(matches!(error, RenderError::NoOutput { .. }), "got {error:?}");
+        assert!(
+            matches!(error, RenderError::NoOutput { .. }),
+            "got {error:?}"
+        );
     }
 
     #[test]

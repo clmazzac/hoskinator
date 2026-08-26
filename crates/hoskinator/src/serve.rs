@@ -18,10 +18,10 @@ use jsonrpsee::RpcModule;
 
 use crate::rpc::{
     ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi, EntryRpcServer,
-    JobDescriptionApi, JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RenderApi,
-    RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi, ResumeRepositoryProvider,
-    ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer, WorkspaceApi,
-    WorkspaceRpcServer,
+    GithubApi, GithubRpcServer, JobDescriptionApi, JobDescriptionRpcServer, ProfileApi,
+    ProfileRpcServer, RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi,
+    ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
+    SectionRpcServer, WorkspaceApi, WorkspaceRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
@@ -93,6 +93,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(RenderApi::new(resume_repo.clone()).into_rpc())?;
     module.merge(ApplicationApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(WorkspaceApi::new(resume_repo.clone()).into_rpc())?;
+    module.merge(GithubApi::new(resume_repo.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
     Ok(Router::new()
@@ -1044,7 +1045,7 @@ mod tests {
 
     #[tokio::test]
     async fn render_available_docx_answers_whether_it_can_run_without_erroring_over_a_missing_tool()
-     {
+    {
         let (_dir, router) = test_router().await;
 
         let available = call(

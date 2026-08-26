@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { FolderGit2, Loader2, Moon, Plus, Sun, UploadCloud } from "lucide-react";
 
 import ApplicationTracker from "@/components/ApplicationTracker";
+import GithubDialog from "@/components/GithubDialog";
 import LaunchDialog from "@/components/LaunchDialog";
 import RepositorySetup from "@/components/RepositorySetup";
 import ResumeTree from "@/components/ResumeTree";
@@ -10,6 +11,7 @@ import { isDark, setDark } from "@/lib/theme";
 import { toCsv } from "@/lib/sheet";
 import {
   commitResume,
+  githubStatus,
   listApplications,
   pushBranch,
   repositoryState,
@@ -18,6 +20,7 @@ import {
   writeStagedFile,
   type Application,
   type Branch,
+  type GithubStatus,
   type WorkspaceStatus,
 } from "@/rpc";
 
@@ -35,9 +38,12 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [dark, setDarkState] = useState(isDark);
   const [launching, setLaunching] = useState(false);
+  const [github, setGithub] = useState<GithubStatus | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
   const load = useCallback(() => {
     workspaceStatus().then(setStatus, () => setStatus(null));
+    githubStatus().then(setGithub, () => setGithub(null));
     listApplications().then(setApplications, () => setApplications([]));
     repositoryState().then(
       (state) => {
@@ -109,6 +115,28 @@ export default function Home() {
 
           <span className="flex-1" />
 
+          {github?.connected && (
+            <button
+              type="button"
+              className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"
+              title="GitHub connection — click to manage"
+              onClick={() => setConnecting(true)}
+            >
+              <FolderGit2 className="size-3.5" />
+              {github.login}
+            </button>
+          )}
+          {!github?.connected && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => setConnecting(true)}
+            >
+              Connect GitHub
+            </Button>
+          )}
+
           {ready && (
             <>
               {dirty > 0 && (
@@ -155,6 +183,10 @@ export default function Home() {
           </Button>
         </div>
       </header>
+
+      {connecting && (
+        <GithubDialog status={github} onOpenChange={setConnecting} onChanged={load} />
+      )}
 
       <div className="mx-auto max-w-6xl px-6 py-8">
         {!ready ? (

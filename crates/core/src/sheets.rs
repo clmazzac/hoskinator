@@ -15,9 +15,7 @@ pub enum SheetError {
     NotLinked,
     #[error("could not reach the sheet")]
     Request(#[source] reqwest::Error),
-    #[error(
-        "the sheet answered {status}; is it shared with \"anyone with the link\" as a viewer?"
-    )]
+    #[error("the sheet answered {status}; is it shared with \"anyone with the link\" as a viewer?")]
     Denied { status: u16 },
     #[error("could not write the configuration")]
     Config(#[source] std::io::Error),
@@ -37,7 +35,11 @@ pub fn id_from(input: &str) -> Result<String, SheetError> {
         None => trimmed,
     };
 
-    if !candidate.is_empty() && candidate.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !candidate.is_empty()
+        && candidate
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         Ok(candidate.to_string())
     } else {
         Err(SheetError::InvalidLink)

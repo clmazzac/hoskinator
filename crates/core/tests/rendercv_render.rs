@@ -100,7 +100,11 @@ fn a_resume_exports_to_the_named_docx_and_leaves_nothing_else_behind() {
 
     assert_eq!(exported.path, output.path().join("Ada.docx"));
     // A DOCX is a ZIP archive.
-    assert!(std::fs::read(&exported.path).unwrap().starts_with(b"PK\x03\x04"));
+    assert!(
+        std::fs::read(&exported.path)
+            .unwrap()
+            .starts_with(b"PK\x03\x04")
+    );
     let produced: Vec<_> = std::fs::read_dir(output.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name())

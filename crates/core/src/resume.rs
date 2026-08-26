@@ -749,7 +749,9 @@ pub fn move_section(repository_path: &Path, from: usize, to: usize) -> Result<()
     }
     let end = match document.query_exact(&sections_route).ok().flatten() {
         Some(feature) if source[feature.location.byte_span.1..].contains('\n') => {
-            source[feature.location.byte_span.1..].find('\n').unwrap() + feature.location.byte_span.1 + 1
+            source[feature.location.byte_span.1..].find('\n').unwrap()
+                + feature.location.byte_span.1
+                + 1
         }
         Some(feature) => feature.location.byte_span.1,
         None => return Err(missing()),
@@ -1026,8 +1028,11 @@ design:
     #[test]
     fn moving_a_section_out_of_range_is_rejected() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join(FILENAME), "cv:\n  sections:\n    Experience: []\n")
-            .unwrap();
+        std::fs::write(
+            dir.path().join(FILENAME),
+            "cv:\n  sections:\n    Experience: []\n",
+        )
+        .unwrap();
 
         assert!(matches!(
             move_section(dir.path(), 3, 0),

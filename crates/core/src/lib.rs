@@ -10,6 +10,7 @@ pub mod application;
 pub mod bullet;
 pub mod config;
 pub mod entry;
+pub mod github;
 pub mod home;
 pub mod job_description;
 pub mod lineage;
