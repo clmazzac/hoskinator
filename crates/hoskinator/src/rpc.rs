@@ -222,6 +222,9 @@ pub trait RepositoryRpc {
     #[method(name = "repository.branch.create")]
     async fn repository_branch_create(&self, request: CreateBranchRequest) -> RpcResult<Branch>;
 
+    #[method(name = "repository.branch.delete")]
+    async fn repository_branch_delete(&self, name: String) -> RpcResult<RepositoryState>;
+
     #[method(name = "repository.checkout")]
     async fn repository_checkout(&self, request: CheckoutRequest) -> RpcResult<RepositoryState>;
 
@@ -589,6 +592,14 @@ impl RepositoryRpcServer for RepositoryApi {
     async fn repository_branch_create(&self, request: CreateBranchRequest) -> RpcResult<Branch> {
         self.operation(move |repository| repository.create_branch(request))
             .await
+    }
+
+    async fn repository_branch_delete(&self, name: String) -> RpcResult<RepositoryState> {
+        self.operation(move |repository| {
+            repository.delete_branch(&name)?;
+            repository.state()
+        })
+        .await
     }
 
     async fn repository_checkout(&self, request: CheckoutRequest) -> RpcResult<RepositoryState> {

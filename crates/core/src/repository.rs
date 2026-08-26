@@ -254,6 +254,44 @@ impl ResumeRepository {
         })
     }
 
+    /// Deletes a local branch. The open branch cannot be deleted, and neither can a
+    /// branch whose commits no other local branch reaches.
+    pub fn delete_branch(&self, name: &str) -> Result<(), RepositoryError> {
+        let mut branch = self
+            .repository
+            .find_branch(name, BranchType::Local)
+            .map_err(|_| RepositoryError::NotFound {
+                name: name.to_owned(),
+            })?;
+        if branch.is_head() {
+            return Err(precondition_error());
+        }
+        let tip = branch
+            .get()
+            .peel_to_commit()
+            .map_err(|_| precondition_error())?;
+        let reached_elsewhere = self
+            .repository
+            .branches(Some(BranchType::Local))
+            .map_err(RepositoryError::Operation)?
+            .filter_map(Result::ok)
+            .filter(|(other, _)| !matches!(other.name(), Ok(Some(existing)) if existing == name))
+            .filter_map(|(other, _)| other.get().peel_to_commit().ok())
+            .any(|commit| {
+                commit.id() == tip.id()
+                    || self
+                        .repository
+                        .graph_descendant_of(commit.id(), tip.id())
+                        .unwrap_or(false)
+            });
+        if !reached_elsewhere {
+            return Err(RepositoryError::Conflict {
+                message: "branch has commits no other branch reaches".into(),
+            });
+        }
+        branch.delete().map_err(RepositoryError::Operation)
+    }
+
     pub fn checkout(&self, request: CheckoutRequest) -> Result<RepositoryState, RepositoryError> {
         let branch = self
             .repository
@@ -941,6 +979,54 @@ mod tests {
                 branch: "missing".into()
             }),
             Err(RepositoryError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn deletes_a_merged_branch_and_refuses_the_open_and_unreachable_ones() {
+        let (dir, repository) = repo();
+        initial_commit(&repository, &dir);
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "spare".into(),
+                from: None,
+            })
+            .unwrap();
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "divergent".into(),
+                from: None,
+            })
+            .unwrap();
+        repository
+            .checkout(CheckoutRequest {
+                branch: "divergent".into(),
+            })
+            .unwrap();
+        std::fs::write(dir.path().join("resume.yaml"), "cv:\n  name: X\n").unwrap();
+        repository
+            .commit(CommitRequest {
+                message: "Diverge".into(),
+            })
+            .unwrap();
+
+        assert!(repository.delete_branch("missing").is_err());
+        // The open branch is refused, whatever it is.
+        assert!(repository.delete_branch("divergent").is_err());
+        // A branch at a commit another branch reaches goes quietly.
+        repository.delete_branch("spare").unwrap();
+        assert!(
+            repository
+                .state()
+                .unwrap()
+                .branches
+                .iter()
+                .all(|branch| branch.name != "spare")
+        );
+        // A branch whose commits nothing else reaches is refused.
+        assert!(matches!(
+            repository.delete_branch("divergent"),
+            Err(RepositoryError::Conflict { .. })
         ));
     }
 

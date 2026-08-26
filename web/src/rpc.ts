@@ -497,6 +497,10 @@ export function checkoutBranch(branch: string): Promise<RepositoryState> {
   return call<RepositoryState>("repository.checkout", [{ branch }]);
 }
 
+export function deleteBranch(branch: string): Promise<RepositoryState> {
+  return call<RepositoryState>("repository.branch.delete", [branch]);
+}
+
 export function commitResume(message: string): Promise<unknown> {
   return call("repository.commit", [{ message }]);
 }

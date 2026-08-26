@@ -7,16 +7,19 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import DeleteBranchDialog from "@/components/DeleteBranchDialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import {
   branchName,
   checkoutBranch,
   createBranch,
+  deleteBranch,
   mergeBranch,
   repositoryState,
   type Application,
@@ -71,6 +74,7 @@ function Row({
   onCheckout,
   onMerge,
   onAdd,
+  onDelete,
   busy,
   children,
 }: {
@@ -80,6 +84,7 @@ function Row({
   onCheckout: (name: string) => void;
   onMerge: (from: string, into: string, direction: "up" | "down") => void;
   onAdd?: () => void;
+  onDelete?: () => void;
   busy: string | null;
   children?: number;
   }) {
@@ -199,6 +204,18 @@ function Row({
         >
           <Pencil className="size-3.5" />
         </Button>
+        {onDelete && !branch.is_head && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            title={`Delete ${branch.name}`}
+            disabled={busy !== null}
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -216,6 +233,7 @@ export default function ResumeTree({
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [label, setLabel] = useState("");
 
   const load = useCallback(() => {
@@ -281,6 +299,23 @@ export default function ResumeTree({
         refresh();
       })
       .catch((failure: Error) => setError(failure.message));
+  };
+
+  const remove = (name: string) => {
+    setBusy(`delete:${name}`);
+    setError(null);
+    setNotice(null);
+    deleteBranch(name)
+      .then(() => {
+        setBusy(null);
+        setDeleting(null);
+        setNotice(`${name} deleted.`);
+        refresh();
+      })
+      .catch((failure: Error) => {
+        setBusy(null);
+        setError(failure.message);
+      });
   };
 
   if (error && !branches) {
@@ -353,6 +388,7 @@ export default function ResumeTree({
                 setAdding(node.branch.name);
                 setLabel("");
               }}
+              onDelete={() => setDeleting(node.branch.name)}
             />
             {adding === node.branch.name && (
               <div className="flex items-center gap-2 py-1 pl-12">
@@ -387,6 +423,7 @@ export default function ResumeTree({
                     onCheckout={checkout}
                     onMerge={merge}
                     busy={busy}
+                    onDelete={() => setDeleting(child.branch.name)}
                   />
                 ))}
               </div>
@@ -408,11 +445,19 @@ export default function ResumeTree({
                 onCheckout={checkout}
                 onMerge={merge}
                 busy={busy}
+                onDelete={() => setDeleting(branch.name)}
               />
             ))}
           </>
         )}
       </div>
+
+      <DeleteBranchDialog
+        branch={deleting}
+        busy={busy !== null}
+        onCancel={() => setDeleting(null)}
+        onDelete={() => deleting && remove(deleting)}
+      />
 
       {(notice || error) && (
         <p

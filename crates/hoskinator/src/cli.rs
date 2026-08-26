@@ -92,6 +92,15 @@ pub async fn repository_checkout(port: u16, branch: String) -> Result<(), CliErr
     )
 }
 
+pub async fn repository_delete(port: u16, branch: String) -> Result<(), CliError> {
+    render(
+        client(port)?
+            .repository_branch_delete(branch)
+            .await
+            .map_err(|source| classify(source, port))?,
+    )
+}
+
 pub async fn repository_commit(port: u16, message: String) -> Result<(), CliError> {
     render(
         client(port)?
