@@ -3,10 +3,12 @@ import { FolderGit2, Loader2, Moon, Plus, Sun, UploadCloud } from "lucide-react"
 
 import ApplicationTracker from "@/components/ApplicationTracker";
 import LaunchDialog from "@/components/LaunchDialog";
+import RepositoryDialog from "@/components/RepositoryDialog";
 import RepositorySetup from "@/components/RepositorySetup";
 import ResumeTree from "@/components/ResumeTree";
 import { Button } from "@/components/ui/button";
 import { isDark, setDark } from "@/lib/theme";
+import { repositorySlug } from "@/lib/utils";
 import { toCsv } from "@/lib/sheet";
 import {
   commitResume,
@@ -35,6 +37,7 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [dark, setDarkState] = useState(isDark);
   const [launching, setLaunching] = useState(false);
+  const [managingRepository, setManagingRepository] = useState(false);
 
   const load = useCallback(() => {
     workspaceStatus().then(setStatus, () => setStatus(null));
@@ -94,23 +97,24 @@ export default function Home() {
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3">
           <h1 className="text-sm font-semibold tracking-tight">Hoskinator</h1>
-          {status.github_login && (
-            <span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex">
-              <FolderGit2 className="size-3.5" />
-              {status.github_login}
-              {status.remote_url && <span className="text-muted-foreground/50">·</span>}
-              {status.remote_url && (
-                <span className="max-w-56 truncate font-mono text-[10px]">
-                  {status.remote_url.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, "$1")}
-                </span>
-              )}
-            </span>
-          )}
 
           <span className="flex-1" />
 
           {ready && (
             <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                title="Which repository this is, and how to switch"
+                onClick={() => setManagingRepository(true)}
+              >
+                <FolderGit2 className="size-3.5" />
+                <span className="max-w-40 truncate font-mono">
+                  {repositorySlug(status.remote_url) ?? "Repository"}
+                </span>
+              </Button>
+
               {dirty > 0 && (
                 <span className="text-xs text-muted-foreground tabular-nums">
                   {dirty} unsaved change{dirty === 1 ? "" : "s"}
@@ -192,6 +196,15 @@ export default function Home() {
         branches={branches}
         onChanged={load}
       />
+
+      {ready && (
+        <RepositoryDialog
+          status={status}
+          open={managingRepository}
+          onOpenChange={setManagingRepository}
+          onReady={setStatus}
+        />
+      )}
     </main>
   );
 }
