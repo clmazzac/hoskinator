@@ -31,6 +31,12 @@ pub enum RepositoryError {
     IdentityUnavailable(#[source] git2::Error),
     #[error("repository operation failed")]
     Operation(#[source] git2::Error),
+    #[error("could not write {path}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,11 +61,26 @@ pub struct Branch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateBranchRequest {
     pub name: String,
+    /// The branch it starts from. HEAD when absent.
+    #[serde(default)]
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckoutRequest {
     pub branch: String,
+}
+
+/// What a merge did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeOutcome {
+    /// The branch merged into.
+    pub branch: String,
+    /// The branch merged from.
+    pub from: String,
+    /// One of `already-current`, `fast-forward`, or `merged`.
+    pub kind: String,
+    pub commit_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,8 +231,19 @@ impl ResumeRepository {
                 message: "branch already exists".into(),
             });
         }
-        let head = self.local_head()?;
-        let commit = head.peel_to_commit().map_err(|_| precondition_error())?;
+        let commit = match &request.from {
+            Some(from) => self
+                .repository
+                .find_branch(from, BranchType::Local)
+                .map_err(|_| RepositoryError::NotFound { name: from.clone() })?
+                .get()
+                .peel_to_commit()
+                .map_err(|_| precondition_error())?,
+            None => {
+                let head = self.local_head()?;
+                head.peel_to_commit().map_err(|_| precondition_error())?
+            }
+        };
         self.repository
             .branch(&request.name, &commit, false)
             .map_err(RepositoryError::Operation)?;
@@ -220,6 +252,44 @@ impl ResumeRepository {
             commit_id: Some(commit.id().to_string()),
             is_head: false,
         })
+    }
+
+    /// Deletes a local branch. The open branch cannot be deleted, and neither can a
+    /// branch whose commits no other local branch reaches.
+    pub fn delete_branch(&self, name: &str) -> Result<(), RepositoryError> {
+        let mut branch = self
+            .repository
+            .find_branch(name, BranchType::Local)
+            .map_err(|_| RepositoryError::NotFound {
+                name: name.to_owned(),
+            })?;
+        if branch.is_head() {
+            return Err(precondition_error());
+        }
+        let tip = branch
+            .get()
+            .peel_to_commit()
+            .map_err(|_| precondition_error())?;
+        let reached_elsewhere = self
+            .repository
+            .branches(Some(BranchType::Local))
+            .map_err(RepositoryError::Operation)?
+            .filter_map(Result::ok)
+            .filter(|(other, _)| !matches!(other.name(), Ok(Some(existing)) if existing == name))
+            .filter_map(|(other, _)| other.get().peel_to_commit().ok())
+            .any(|commit| {
+                commit.id() == tip.id()
+                    || self
+                        .repository
+                        .graph_descendant_of(commit.id(), tip.id())
+                        .unwrap_or(false)
+            });
+        if !reached_elsewhere {
+            return Err(RepositoryError::Conflict {
+                message: "branch has commits no other branch reaches".into(),
+            });
+        }
+        branch.delete().map_err(RepositoryError::Operation)
     }
 
     pub fn checkout(&self, request: CheckoutRequest) -> Result<RepositoryState, RepositoryError> {
@@ -320,6 +390,25 @@ impl ResumeRepository {
             )
             .map_err(RepositoryError::Operation)?;
         self.record(id)
+    }
+
+    /// Writes `contents` to `relative_path` within the repository and stages it, so the next
+    /// `commit` picks it up alongside whatever else changed.
+    pub fn write_staged(&self, relative_path: &str, contents: &str) -> Result<(), RepositoryError> {
+        let workdir = self.repository.workdir().ok_or_else(|| {
+            RepositoryError::Operation(git2::Error::from_str("repository has no working directory"))
+        })?;
+        let path = workdir.join(relative_path);
+        std::fs::write(&path, contents).map_err(|source| RepositoryError::Io { path, source })?;
+
+        let mut index = self
+            .repository
+            .index()
+            .map_err(RepositoryError::Operation)?;
+        index
+            .add_path(Path::new(relative_path))
+            .map_err(RepositoryError::Operation)?;
+        index.write().map_err(RepositoryError::Operation)
     }
 
     pub fn status(&self) -> Result<RepositoryStatus, RepositoryError> {
@@ -471,6 +560,131 @@ impl ResumeRepository {
         })
     }
 
+    /// Merges `from` into the checked-out branch.
+    ///
+    /// Fast-forwards where it can. A merge that would leave conflicts is refused and nothing is
+    /// written, because a half-merged resume.yaml is worse than no merge.
+    pub fn merge(&self, from: &str) -> Result<MergeOutcome, RepositoryError> {
+        let source = self
+            .repository
+            .find_branch(from, BranchType::Local)
+            .map_err(|_| RepositoryError::NotFound {
+                name: from.to_string(),
+            })?;
+        let source_commit = source
+            .get()
+            .peel_to_commit()
+            .map_err(|_| precondition_error())?;
+
+        let head = self.local_head()?;
+        let head_commit = head.peel_to_commit().map_err(|_| precondition_error())?;
+        let head_name = head.shorthand().unwrap_or_default().to_string();
+
+        if head_commit.id() == source_commit.id() {
+            return Ok(MergeOutcome {
+                branch: head_name,
+                from: from.to_string(),
+                kind: "already-current".into(),
+                commit_id: Some(head_commit.id().to_string()),
+            });
+        }
+
+        let annotated = self
+            .repository
+            .find_annotated_commit(source_commit.id())
+            .map_err(RepositoryError::Operation)?;
+        let (analysis, _) = self
+            .repository
+            .merge_analysis(&[&annotated])
+            .map_err(RepositoryError::Operation)?;
+
+        if analysis.is_up_to_date() {
+            return Ok(MergeOutcome {
+                branch: head_name,
+                from: from.to_string(),
+                kind: "already-current".into(),
+                commit_id: Some(head_commit.id().to_string()),
+            });
+        }
+
+        if analysis.is_fast_forward() {
+            let mut reference = self
+                .repository
+                .find_reference(head.name().ok_or_else(non_utf8_error)?)
+                .map_err(RepositoryError::Operation)?;
+            reference
+                .set_target(source_commit.id(), "merge: fast-forward")
+                .map_err(RepositoryError::Operation)?;
+            self.repository
+                .set_head(reference.name().ok_or_else(non_utf8_error)?)
+                .map_err(RepositoryError::Operation)?;
+            self.repository
+                .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+                .map_err(RepositoryError::Operation)?;
+            return Ok(MergeOutcome {
+                branch: head_name,
+                from: from.to_string(),
+                kind: "fast-forward".into(),
+                commit_id: Some(source_commit.id().to_string()),
+            });
+        }
+
+        let mut index = self
+            .repository
+            .merge_commits(&head_commit, &source_commit, None)
+            .map_err(RepositoryError::Operation)?;
+
+        if index.has_conflicts() {
+            let paths: Vec<String> = index
+                .conflicts()
+                .map_err(RepositoryError::Operation)?
+                .filter_map(|conflict| conflict.ok())
+                .filter_map(|conflict| {
+                    conflict
+                        .our
+                        .or(conflict.their)
+                        .and_then(|entry| String::from_utf8(entry.path).ok())
+                })
+                .collect();
+            return Err(RepositoryError::Conflict {
+                message: format!("merge would conflict in {}", paths.join(", ")),
+            });
+        }
+
+        let tree_id = index
+            .write_tree_to(&self.repository)
+            .map_err(RepositoryError::Operation)?;
+        let tree = self
+            .repository
+            .find_tree(tree_id)
+            .map_err(RepositoryError::Operation)?;
+        let signature = self
+            .repository
+            .signature()
+            .map_err(RepositoryError::IdentityUnavailable)?;
+        let id = self
+            .repository
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                &format!("Merge {from} into {head_name}"),
+                &tree,
+                &[&head_commit, &source_commit],
+            )
+            .map_err(RepositoryError::Operation)?;
+        self.repository
+            .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .map_err(RepositoryError::Operation)?;
+
+        Ok(MergeOutcome {
+            branch: head_name,
+            from: from.to_string(),
+            kind: "merged".into(),
+            commit_id: Some(id.to_string()),
+        })
+    }
+
     fn local_head(&self) -> Result<git2::Reference<'_>, RepositoryError> {
         let head = self.repository.head().map_err(|_| precondition_error())?;
         if head.is_branch() {
@@ -589,6 +803,13 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// A repository with one commit on its initial branch.
+    fn seeded() -> (TempDir, ResumeRepository) {
+        let (dir, repository) = repo();
+        initial_commit(&repository, &dir);
+        (dir, repository)
+    }
+
     fn repo() -> (TempDir, ResumeRepository) {
         let dir = TempDir::new().unwrap();
         let repository = ResumeRepository::open_or_init(dir.path()).unwrap();
@@ -632,7 +853,8 @@ mod tests {
         assert!(reopened.log().unwrap().commits.is_empty());
         assert!(matches!(
             reopened.create_branch(CreateBranchRequest {
-                name: "next".into()
+                name: "next".into(),
+                from: None,
             }),
             Err(RepositoryError::Conflict { .. })
         ));
@@ -692,12 +914,60 @@ mod tests {
     }
 
     #[test]
+    fn a_staged_write_lands_in_the_next_commit() {
+        let (dir, repository) = seeded();
+
+        repository
+            .write_staged("applications.csv", "Company,Position\nAcme,Engineer\n")
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("applications.csv")).unwrap(),
+            "Company,Position\nAcme,Engineer\n"
+        );
+        let record = repository
+            .commit(CommitRequest {
+                message: "sync applications".into(),
+            })
+            .unwrap();
+        assert_eq!(record.message, "sync applications");
+        assert!(repository.status().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn a_staged_write_replaces_the_previous_contents() {
+        let (dir, repository) = seeded();
+        repository
+            .write_staged("applications.csv", "first\n")
+            .unwrap();
+        repository
+            .commit(CommitRequest {
+                message: "first sync".into(),
+            })
+            .unwrap();
+
+        repository
+            .write_staged("applications.csv", "second\n")
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("applications.csv")).unwrap(),
+            "second\n"
+        );
+        assert_eq!(
+            repository.status().unwrap().entries[0].path,
+            "applications.csv"
+        );
+    }
+
+    #[test]
     fn creates_and_checks_out_local_branches() {
         let (dir, repository) = repo();
         let initial = initial_commit(&repository, &dir);
         let branch = repository
             .create_branch(CreateBranchRequest {
                 name: "revision".into(),
+                from: None,
             })
             .unwrap();
         assert_eq!(branch.commit_id, Some(initial.id));
@@ -709,7 +979,8 @@ mod tests {
         assert_eq!(state.head.unwrap().branch.as_deref(), Some("revision"));
         assert!(matches!(
             repository.create_branch(CreateBranchRequest {
-                name: "revision".into()
+                name: "revision".into(),
+                from: None,
             }),
             Err(RepositoryError::Conflict { .. })
         ));
@@ -722,6 +993,51 @@ mod tests {
     }
 
     #[test]
+    fn deletes_a_merged_branch_and_refuses_the_open_and_unreachable_ones() {
+        let (dir, repository) = repo();
+        initial_commit(&repository, &dir);
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "spare".into(),
+                from: None,
+            })
+            .unwrap();
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "divergent".into(),
+                from: None,
+            })
+            .unwrap();
+        repository
+            .checkout(CheckoutRequest {
+                branch: "divergent".into(),
+            })
+            .unwrap();
+        std::fs::write(dir.path().join("resume.yaml"), "cv:\n  name: X\n").unwrap();
+        repository
+            .commit(CommitRequest {
+                message: "Diverge".into(),
+            })
+            .unwrap();
+
+        assert!(repository.delete_branch("missing").is_err());
+        assert!(repository.delete_branch("divergent").is_err());
+        repository.delete_branch("spare").unwrap();
+        assert!(
+            repository
+                .state()
+                .unwrap()
+                .branches
+                .iter()
+                .all(|branch| branch.name != "spare")
+        );
+        assert!(matches!(
+            repository.delete_branch("divergent"),
+            Err(RepositoryError::Conflict { .. })
+        ));
+    }
+
+    #[test]
     fn failed_safe_checkout_keeps_the_current_branch() {
         let (dir, repository) = repo();
         initial_commit(&repository, &dir);
@@ -729,6 +1045,7 @@ mod tests {
         repository
             .create_branch(CreateBranchRequest {
                 name: "revision".into(),
+                from: None,
             })
             .unwrap();
         repository
@@ -822,6 +1139,64 @@ mod tests {
                 message: " ".into()
             }),
             Err(RepositoryError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn a_branch_can_start_from_another_branch() {
+        let (_dir, repository) = seeded();
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "archetype/systems".into(),
+                from: None,
+            })
+            .unwrap();
+
+        let child = repository
+            .create_branch(CreateBranchRequest {
+                name: "apply/systems/acme".into(),
+                from: Some("archetype/systems".into()),
+            })
+            .unwrap();
+
+        assert_eq!(child.name, "apply/systems/acme");
+    }
+
+    #[test]
+    fn branching_from_a_branch_that_is_not_there_is_rejected() {
+        let (_dir, repository) = seeded();
+
+        assert!(matches!(
+            repository.create_branch(CreateBranchRequest {
+                name: "child".into(),
+                from: Some("nowhere".into()),
+            }),
+            Err(RepositoryError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn merging_a_branch_that_has_not_moved_changes_nothing() {
+        let (_dir, repository) = seeded();
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "sibling".into(),
+                from: None,
+            })
+            .unwrap();
+
+        let outcome = repository.merge("sibling").unwrap();
+
+        assert_eq!(outcome.kind, "already-current");
+    }
+
+    #[test]
+    fn merging_a_branch_that_is_not_there_is_rejected() {
+        let (_dir, repository) = seeded();
+
+        assert!(matches!(
+            repository.merge("nowhere"),
+            Err(RepositoryError::NotFound { .. })
         ));
     }
 }

@@ -121,6 +121,12 @@ pub enum StoreError {
     #[error("could not delete a Job Description")]
     DeleteJobDescription(#[source] diesel::result::Error),
 
+    #[error("could not write an application")]
+    WriteApplication(#[source] diesel::result::Error),
+
+    #[error("could not read applications")]
+    ReadApplications(#[source] diesel::result::Error),
+
     #[error(transparent)]
     Section(#[from] crate::section::SectionError),
 

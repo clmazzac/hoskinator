@@ -64,3 +64,18 @@ diesel::table! {
         entry_type -> Text,
     }
 }
+
+diesel::table! {
+    application (id) {
+        id -> BigInt,
+        company -> Text,
+        position -> Text,
+        status -> Text,
+        date_applied -> Nullable<Text>,
+        listing_url -> Nullable<Text>,
+        resume_branch -> Nullable<Text>,
+        notes -> Nullable<Text>,
+        jd_text -> Nullable<Text>,
+        created_at -> Text,
+    }
+}

@@ -11,20 +11,34 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use hoskinator_core::home::{Home, HomeError};
 use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
 use crate::rpc::{
-    BulletApi, BulletRpcServer, EntryApi, EntryRpcServer, JobDescriptionApi,
-    JobDescriptionRpcServer, ProfileApi, ProfileRpcServer, RepositoryApi, RepositoryRpcServer,
-    ResumeApi, ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
-    SectionRpcServer,
+    ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi, EntryRpcServer,
+    GithubApi, GithubRpcServer, JobDescriptionApi, JobDescriptionRpcServer, ProfileApi,
+    ProfileRpcServer, RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi,
+    ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
+    SectionRpcServer, WorkspaceApi, WorkspaceRpcServer,
 };
 
 /// Port the daemon binds unless told otherwise.
 pub const DEFAULT_PORT: u16 = 8737;
+/// Path the rendered PDF is served from, so a browser can show what rendercv produced.
+pub const PREVIEW_PATH: &str = "/preview.pdf";
+/// Path the exported DOCX is served from.
+pub const PREVIEW_DOCX_PATH: &str = "/preview.docx";
+
+/// Where renders land: the platform temp directory, not the resume repository.
+///
+/// A render inside the repository would dirty `repository.status` on every keystroke of an
+/// auto-render, and Home holds the store alone (`docs/decisions/home-and-config.md`).
+pub fn preview_directory() -> PathBuf {
+    std::env::temp_dir().join("hoskinator")
+}
+
 /// Path the JSON-RPC contract is served from.
 const RPC_PATH: &str = "/rpc";
 
@@ -69,21 +83,77 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
 /// The daemon's routes, with every request passing the authenticator.
 fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, ServeError> {
     let mut module = RpcModule::new(());
-    module.merge(ProfileApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(ProfileApi::new(Arc::clone(&store), resume_repo.clone()).into_rpc())?;
     module.merge(SectionApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(Arc::clone(&store)).into_rpc())?;
-    module.merge(ResumeApi::new(store, resume_repo.clone()).into_rpc())?;
+    module.merge(ResumeApi::new(Arc::clone(&store), resume_repo.clone()).into_rpc())?;
+    module.merge(RenderApi::new(resume_repo.clone()).into_rpc())?;
+    module.merge(ApplicationApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(WorkspaceApi::new(resume_repo.clone()).into_rpc())?;
+    module.merge(GithubApi::new(resume_repo.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
 
     Ok(Router::new()
         .route(RPC_PATH, post(dispatch))
+        .route(PREVIEW_PATH, get(preview))
+        .route(PREVIEW_DOCX_PATH, get(preview_docx))
         .fallback(crate::web::asset)
         .layer(axum::middleware::from_fn(authenticate))
         .with_state(Arc::new(module)))
 }
+
+/// Serves the most recent render. `?download=<name>` asks the browser to save it under that name.
+async fn preview(axum::extract::Query(query): axum::extract::Query<PreviewQuery>) -> Response {
+    served_file(PREVIEW_FILE, "application/pdf", query.download)
+}
+
+/// Serves the most recent DOCX export. `?download=<name>` asks the browser to save it under that name.
+async fn preview_docx(axum::extract::Query(query): axum::extract::Query<PreviewQuery>) -> Response {
+    served_file(
+        PREVIEW_DOCX_FILE,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        query.download,
+    )
+}
+
+/// Reads `file_name` out of the preview directory and serves it with `content_type`.
+fn served_file(file_name: &str, content_type: &str, download: Option<String>) -> Response {
+    let path = preview_directory().join(file_name);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return (StatusCode::NOT_FOUND, "nothing has been rendered yet").into_response();
+    };
+
+    let disposition = match download.as_deref() {
+        Some(name) if !name.is_empty() => {
+            format!("attachment; filename=\"{}\"", name.replace('"', ""))
+        }
+        _ => "inline".to_string(),
+    };
+
+    (
+        [
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PreviewQuery {
+    download: Option<String>,
+}
+
+/// The file every render writes, replaced each time.
+pub const PREVIEW_FILE: &str = "preview.pdf";
+
+/// The file every DOCX export writes, replaced each time.
+pub const PREVIEW_DOCX_FILE: &str = "preview.docx";
 
 /// Hands the request body to jsonrpsee and returns whatever it answers.
 async fn dispatch(State(module): State<Arc<RpcModule<()>>>, body: String) -> Response {
@@ -225,6 +295,48 @@ mod tests {
         )
         .await;
         assert_eq!(got["result"], serde_json::to_value(&profile).unwrap());
+    }
+
+    #[tokio::test]
+    async fn setting_the_profile_refreshes_the_current_branch_s_resume_yaml() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Old Name\n").unwrap();
+
+        let profile = Profile {
+            name: Some("Ada Lovelace".into()),
+            ..Profile::default()
+        };
+        let params = serde_json::to_string(&profile).unwrap();
+        let set = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"profile.set","params":[{params}]}}"#),
+        )
+        .await;
+        assert!(set.get("error").is_none(), "set failed: {set}");
+
+        let written = std::fs::read_to_string(repo.join("resume.yaml")).unwrap();
+        assert!(written.contains("Ada Lovelace"), "got: {written}");
+        assert!(!written.contains("Old Name"), "got: {written}");
+    }
+
+    #[tokio::test]
+    async fn setting_the_profile_without_a_resume_yaml_yet_still_succeeds() {
+        let (dir, router) = repository_router().await;
+        std::fs::create_dir_all(dir.path().join("resume")).unwrap();
+
+        let profile = Profile {
+            name: Some("Ada Lovelace".into()),
+            ..Profile::default()
+        };
+        let params = serde_json::to_string(&profile).unwrap();
+        let set = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"profile.set","params":[{params}]}}"#),
+        )
+        .await;
+        assert!(set.get("error").is_none(), "set failed: {set}");
     }
 
     #[tokio::test]
@@ -836,6 +948,137 @@ mod tests {
         assert!(written.contains("name: Ada Lovelace"));
         assert!(written.contains("# hand-edited"));
         assert!(written.contains("Experience: []"));
+    }
+
+    #[tokio::test]
+    async fn render_answers_whether_it_can_run_without_erroring_over_a_missing_tool() {
+        let (_dir, router) = test_router().await;
+
+        let available = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.available","params":[]}"#,
+        )
+        .await;
+
+        assert!(available["result"].is_boolean(), "got {available}");
+    }
+
+    #[tokio::test]
+    async fn render_run_reports_what_is_missing_before_reaching_the_renderer() {
+        let unconfigured = call(
+            test_router().await.1,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.run","params":["out","Resume"]}"#,
+        )
+        .await;
+        assert_eq!(
+            unconfigured["error"]["code"],
+            crate::rpc::RENDER_UNAVAILABLE
+        );
+
+        let (dir, router) = repository_router().await;
+        std::fs::create_dir_all(dir.path().join("resume")).unwrap();
+
+        let unwritten = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"render.run","params":["out","Resume"]}"#,
+        )
+        .await;
+
+        assert_eq!(unwritten["error"]["code"], crate::rpc::RENDER_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn placing_an_entry_of_the_wrong_type_for_its_section_is_rejected() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+
+        call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"section.create","params":["Experience","experience"]}"#,
+        )
+        .await;
+
+        let mismatched = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"resume.place_entry","params":[
+                "Experience","education",{"institution":"asdf","area":"asdf"}]}"#,
+        )
+        .await;
+        assert_eq!(
+            mismatched["error"]["code"],
+            crate::rpc::RESUME_SECTION_TYPE_MISMATCH,
+            "got {mismatched}"
+        );
+
+        // Nothing was written: the section holds no entries at all yet.
+        let written = std::fs::read_to_string(repo.join("resume.yaml")).unwrap();
+        assert!(!written.contains("asdf"), "got: {written}");
+
+        let matched = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":3,"method":"resume.place_entry","params":[
+                "Experience","experience",{"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+        assert!(matched.get("error").is_none(), "got {matched}");
+        let written = std::fs::read_to_string(repo.join("resume.yaml")).unwrap();
+        assert!(written.contains("Acme"), "got: {written}");
+    }
+
+    #[tokio::test]
+    async fn placing_an_entry_into_a_section_that_does_not_exist_is_reported() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+
+        let missing = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"resume.place_entry","params":[
+                "Nowhere","experience",{"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+        assert_eq!(missing["error"]["code"], crate::rpc::SECTION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn render_available_docx_answers_whether_it_can_run_without_erroring_over_a_missing_tool()
+    {
+        let (_dir, router) = test_router().await;
+
+        let available = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.available_docx","params":[]}"#,
+        )
+        .await;
+
+        assert!(available["result"].is_boolean(), "got {available}");
+    }
+
+    #[tokio::test]
+    async fn render_docx_reports_what_is_missing_before_reaching_the_renderer() {
+        let unconfigured = call(
+            test_router().await.1,
+            r#"{"jsonrpc":"2.0","id":1,"method":"render.docx","params":["out","Resume"]}"#,
+        )
+        .await;
+        assert_eq!(
+            unconfigured["error"]["code"],
+            crate::rpc::RENDER_UNAVAILABLE
+        );
+
+        let (dir, router) = repository_router().await;
+        std::fs::create_dir_all(dir.path().join("resume")).unwrap();
+
+        let unwritten = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"render.docx","params":["out","Resume"]}"#,
+        )
+        .await;
+
+        assert_eq!(unwritten["error"]["code"], crate::rpc::RENDER_NOT_FOUND);
     }
 
     #[tokio::test]

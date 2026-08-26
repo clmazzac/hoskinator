@@ -211,6 +211,7 @@ enum RepositoryAction {
     Init,
     Branch { name: String },
     Checkout { branch: String },
+    Delete { branch: String },
     Commit { message: String },
     Status,
     Diff,
@@ -310,6 +311,9 @@ async fn main() -> ExitCode {
                 cli::repository_branch(port, name).await.map_err(Into::into)
             }
             RepositoryAction::Checkout { branch } => cli::repository_checkout(port, branch)
+                .await
+                .map_err(Into::into),
+            RepositoryAction::Delete { branch } => cli::repository_delete(port, branch)
                 .await
                 .map_err(Into::into),
             RepositoryAction::Commit { message } => cli::repository_commit(port, message)

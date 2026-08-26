@@ -94,6 +94,8 @@ Decisions that apply across the whole repo, newest last. Decisions scoped to one
 | Transport (HTTP + JSON-RPC) | `docs/decisions/transport.md` |
 | Web UI (`web/`) | `docs/decisions/web.md` |
 | Resume YAML (`resume.yaml`) | `docs/decisions/resume.md` |
+| Rendering (rendercv) | `docs/decisions/render.md` |
+| Workspace (branches, GitHub, applications) | `docs/decisions/workspace.md` |
 
 ### Layout: Cargo workspace at the repo root (Slice 1, #2)
 

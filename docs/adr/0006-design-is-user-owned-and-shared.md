@@ -17,3 +17,31 @@ This keeps the repo vanilla in the sense ADR-0001 requires. A shared `design.yam
 
 - **`design:` inlined in every `resume.yaml`.** Each branch becomes self-contained and renders with a bare `rendercv render`. Rejected: any style change becomes an N-branch edit, and the design block is larger than the tailoring it would sit beside.
 - **Design held in the Master Store and injected on write.** Rejected: it contradicts ADR-0001's one-way flow and would make the repo unrenderable without the tool, since the YAML on disk would be missing its design.
+
+## Amendment: the engine writes `design:`, from a fixed set of themes (Slice 9, #10)
+
+**Superseded above:** the shared `design.yaml` at the repo root, and "the engine never writes,
+migrates, or lints `design:`."
+
+The engine now writes a `design:` block into each branch's `resume.yaml`, and the user picks its
+theme from rendercv's built-in set. There is no separate design file and no `--design` flag.
+
+**Why the original reasoning no longer holds.** It rejected inlining because a design block matching
+a LaTeX template took roughly forty lines of overrides, and any style change would then be an
+N-branch edit. A built-in theme is one line, not forty. `theme: engineeringresumes` costs nothing to
+repeat and nothing to change.
+
+**What this buys.** Schema validation now covers the whole document. The original text records that
+`design:` could not be validated, because rendercv's schema models it as a closed union over the
+built-in theme names and a custom Typst theme fails validation while rendering correctly. Restricting
+the choice to that same closed set turns the obstacle into a guarantee: every document the engine
+writes validates whole.
+
+**What it costs.** Custom themes are out. A user who scaffolds one with `rendercv create-theme` can
+still hand-edit `design:` and the engine will not touch it, but the picker cannot offer it and the
+schema check will reject a write that carries it. Per-branch design overrides remain out of scope;
+the picker sets one theme per resume, which is per-branch by construction.
+
+The repo stays vanilla either way (ADR-0001, ADR-0002). A `resume.yaml` carrying a built-in theme
+name is an ordinary rendercv file, and unlike the shared-design arrangement it is now a complete
+render input on its own.

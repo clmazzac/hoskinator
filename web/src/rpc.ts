@@ -35,11 +35,31 @@ async function call<T>(method: string, params: unknown[]): Promise<T> {
   return answer.result as T;
 }
 
-export function getProfile(): Promise<unknown> {
-  return call("profile.get", []);
+/** A username on a network rendercv knows. */
+export interface SocialConnection {
+  network: string;
+  username: string;
 }
 
-export function setProfile(profile: unknown): Promise<null> {
+/** The singleton record mirroring rendercv's `cv:` header. */
+export interface Profile {
+  name: string | null;
+  headline: string | null;
+  location: string | null;
+  photo: string | null;
+  /** One value or several — the form the user wrote is kept. */
+  email: string | string[] | null;
+  phone: string | string[] | null;
+  website: string | string[] | null;
+  social_networks: SocialConnection[];
+  custom_connections: unknown[];
+}
+
+export function getProfile(): Promise<Profile> {
+  return call<Profile>("profile.get", []);
+}
+
+export function setProfile(profile: Profile): Promise<null> {
   return call<null>("profile.set", [profile]);
 }
 
@@ -243,4 +263,316 @@ export type RepositoryResult = RepositoryState | Branch | CommitRecord | Reposit
 
 export function callRepository(request: RepositoryRequest): Promise<RepositoryResult> {
   return call<RepositoryResult>(request.method, request.params);
+}
+
+/** One entry of a resume section, at the position it sits in the file. */
+export interface ResumeEntry {
+  index: number;
+  fields: unknown;
+  highlights: string[];
+}
+
+/** One section of a resume, named as the file names it. */
+export interface ResumeSection {
+  name: string;
+  entries: ResumeEntry[];
+}
+
+export function readResume(): Promise<string> {
+  return call<string>("resume.read", []);
+}
+
+export function writeResume(text: string): Promise<null> {
+  return call<null>("resume.write", [text]);
+}
+
+export function resumeOutline(): Promise<ResumeSection[]> {
+  return call<ResumeSection[]>("resume.outline", []);
+}
+
+export function placeBullet(
+  section: string,
+  entryIndex: number,
+  text: string,
+): Promise<null> {
+  return call<null>("resume.place_bullet", [section, entryIndex, text]);
+}
+
+export function placeEntry(section: string, entryType: string, fields: unknown): Promise<null> {
+  return call<null>("resume.place_entry", [section, entryType, fields]);
+}
+
+export function removeResumeEntry(
+  section: string,
+  entryIndex: number,
+): Promise<null> {
+  return call<null>("resume.remove_entry", [section, entryIndex]);
+}
+
+export function removeResumeBullet(
+  section: string,
+  entryIndex: number,
+  highlightIndex: number,
+): Promise<null> {
+  return call<null>("resume.remove_bullet", [section, entryIndex, highlightIndex]);
+}
+
+export function setResumeEntryField(
+  section: string,
+  entryIndex: number,
+  key: string,
+  value: unknown,
+): Promise<null> {
+  return call<null>("resume.set_entry_field", [section, entryIndex, key, value]);
+}
+
+export function moveResumeEntry(
+  section: string,
+  from: number,
+  to: number,
+): Promise<null> {
+  return call<null>("resume.move_entry", [section, from, to]);
+}
+
+export function moveResumeBullet(
+  section: string,
+  entryIndex: number,
+  from: number,
+  to: number,
+): Promise<null> {
+  return call<null>("resume.move_bullet", [section, entryIndex, from, to]);
+}
+
+export function moveResumeSection(from: number, to: number): Promise<null> {
+  return call<null>("resume.move_section", [from, to]);
+}
+
+export function placeSection(section: string): Promise<null> {
+  return call<null>("resume.place_section", [section]);
+}
+
+export interface RenderedPdf {
+  path: string;
+}
+
+export interface RenderedDocx {
+  path: string;
+}
+
+export function renderAvailable(): Promise<boolean> {
+  return call<boolean>("render.available", []);
+}
+
+export function renderPreview(): Promise<RenderedPdf> {
+  return call<RenderedPdf>("render.preview", []);
+}
+
+/** Whether a DOCX can be exported: both rendercv and pandoc must be on PATH. */
+export function renderAvailableDocx(): Promise<boolean> {
+  return call<boolean>("render.available_docx", []);
+}
+
+export function renderPreviewDocx(): Promise<RenderedDocx> {
+  return call<RenderedDocx>("render.preview_docx", []);
+}
+
+/** Everything under `design:` the picker can set. */
+export interface Design {
+  theme: string | null;
+  show_top_note: boolean;
+}
+
+export function resumeDesign(): Promise<Design> {
+  return call<Design>("resume.design", []);
+}
+
+export function setTopNote(show: boolean): Promise<null> {
+  return call<null>("resume.set_top_note", [show]);
+}
+
+export function resumeThemes(): Promise<string[]> {
+  return call<string[]>("resume.themes", []);
+}
+
+export function setResumeTheme(theme: string): Promise<null> {
+  return call<null>("resume.set_theme", [theme]);
+}
+
+// ---------------------------------------------------------------------------
+// Repository, archetypes, and applications
+// ---------------------------------------------------------------------------
+
+export interface Branch {
+  name: string;
+  commit_id: string | null;
+  is_head: boolean;
+}
+
+export interface RepositoryState {
+  head: { branch: string | null; commit_id: string | null } | null;
+  branches: Branch[];
+}
+
+export type Lineage =
+  | { kind: "trunk" }
+  | { kind: "archetype"; slug: string }
+  | { kind: "application"; slug: string; target: string }
+  | { kind: "loose" };
+
+export interface WorkspaceStatus {
+  gh_installed: boolean;
+  github_login: string | null;
+  repository_path: string | null;
+  repository_ready: boolean;
+  remote_url: string | null;
+  applications_sheet: string | null;
+}
+
+export interface MergeOutcome {
+  branch: string;
+  from: string;
+  kind: string;
+  commit_id: string | null;
+}
+
+export interface Application {
+  id: number;
+  company: string;
+  position: string;
+  status: string;
+  date_applied: string | null;
+  listing_url: string | null;
+  resume_branch: string | null;
+  notes: string | null;
+  jd_text: string | null;
+  created_at: string;
+}
+
+export type NewApplication = Omit<Application, "id" | "created_at">;
+
+export function workspaceStatus(): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.status", []);
+}
+
+export function ownedRepositories(): Promise<string[]> {
+  return call<string[]>("workspace.repositories", []);
+}
+
+export function createGithubRepository(
+  name: string,
+  destination: string,
+): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.create_github", [name, destination]);
+}
+
+export function connectRepository(
+  source: string,
+  destination: string,
+): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.connect", [source, destination]);
+}
+
+/** Links a Google Sheet by its URL or bare id; it must be shared "anyone with the link" (viewer). */
+export function linkSheet(link: string): Promise<WorkspaceStatus> {
+  return call<WorkspaceStatus>("workspace.link_sheet", [link]);
+}
+
+/** Fetches the linked sheet's first tab as CSV. */
+export function sheetCsv(): Promise<string> {
+  return call<string>("workspace.sheet_csv", []);
+}
+
+export interface GithubStatus {
+  connected: boolean;
+  login: string | null;
+}
+
+export interface GithubRepository {
+  name_with_owner: string;
+  private: boolean;
+}
+
+export function githubStatus(): Promise<GithubStatus> {
+  return call<GithubStatus>("github.status", []);
+}
+
+export function authorizeGithub(token: string): Promise<GithubStatus> {
+  return call<GithubStatus>("github.authorize", [token]);
+}
+
+export function deauthorizeGithub(): Promise<null> {
+  return call<null>("github.deauthorize", []);
+}
+
+export function githubRepositories(): Promise<GithubRepository[]> {
+  return call<GithubRepository[]>("github.repositories", []);
+}
+
+/** Points `origin` at `name` on GitHub, creating it private first when `create` is set. */
+export function connectGithub(name: string, create: boolean): Promise<string> {
+  return call<string>("github.connect", [name, create]);
+}
+
+export function pushBranch(branch: string): Promise<null> {
+  return call<null>("workspace.push", [branch]);
+}
+
+export function branchName(slug: string, target: string | null): Promise<string> {
+  return call<string>("workspace.names", [slug, target]);
+}
+
+export function repositoryState(): Promise<RepositoryState> {
+  return call<RepositoryState>("repository.init", []);
+}
+
+export function createBranch(name: string, from: string | null): Promise<Branch> {
+  return call<Branch>("repository.branch.create", [{ name, from }]);
+}
+
+export function checkoutBranch(branch: string): Promise<RepositoryState> {
+  return call<RepositoryState>("repository.checkout", [{ branch }]);
+}
+
+export function deleteBranch(branch: string): Promise<RepositoryState> {
+  return call<RepositoryState>("repository.branch.delete", [branch]);
+}
+
+export function commitResume(message: string): Promise<unknown> {
+  return call("repository.commit", [{ message }]);
+}
+
+export function mergeBranch(from: string): Promise<MergeOutcome> {
+  return call<MergeOutcome>("repository.merge", [from]);
+}
+
+export function repositoryStatus(): Promise<{ entries: unknown[] }> {
+  return call<{ entries: unknown[] }>("repository.status", []);
+}
+
+/** Writes `contents` to `path` in the repository and stages it for the next commit. */
+export function writeStagedFile(path: string, contents: string): Promise<null> {
+  return call<null>("repository.write_staged", [path, contents]);
+}
+
+export function listApplications(): Promise<Application[]> {
+  return call<Application[]>("application.list", []);
+}
+
+export function applicationStatuses(): Promise<string[]> {
+  return call<string[]>("application.statuses", []);
+}
+
+export function createApplication(application: NewApplication): Promise<Application> {
+  return call<Application>("application.create", [application]);
+}
+
+export function updateApplication(
+  id: number,
+  application: NewApplication,
+): Promise<Application> {
+  return call<Application>("application.update", [id, application]);
+}
+
+export function deleteApplication(id: number): Promise<null> {
+  return call<null>("application.delete", [id]);
 }
