@@ -83,11 +83,13 @@ pub fn write(repository_path: &Path, text: String, profile: &Profile) -> Result<
         source,
     })?;
 
+    let updates = profile_updates(profile)?;
+
     let patch = yamlpatch::Patch {
         route: yamlpath::Route::default(),
         operation: yamlpatch::Op::MergeInto {
             key: CV_KEY.to_string(),
-            updates: profile_updates(profile)?,
+            updates,
         },
     };
     let patched = yamlpatch::apply_yaml_patches(&document, std::slice::from_ref(&patch)).map_err(
@@ -163,6 +165,7 @@ pub fn validate(document: &Value) -> Result<(), Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::{SocialNetwork, SocialNetworkName};
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -280,6 +283,28 @@ mod tests {
         let written = read(dir.path()).unwrap();
         let document: Value = yaml_serde::from_str(&written).unwrap();
         assert_eq!(document["cv"]["name"], "Ada Lovelace");
+        assert_eq!(validate(&document), Ok(()));
+    }
+
+    #[test]
+    fn writing_twice_keeps_a_sequence_valued_profile_field_intact() {
+        let dir = TempDir::new().unwrap();
+        let profile = Profile {
+            social_networks: vec![SocialNetwork {
+                network: SocialNetworkName::GitHub,
+                username: "ada".into(),
+            }],
+            ..populated_profile()
+        };
+
+        write(dir.path(), "cv:\n  name: Someone\n".into(), &profile).unwrap();
+        let once = read(dir.path()).unwrap();
+
+        write(dir.path(), once, &profile).unwrap();
+
+        let twice = read(dir.path()).unwrap();
+        let document: Value = yaml_serde::from_str(&twice).unwrap();
+        assert_eq!(document["cv"]["social_networks"][0]["username"], "ada");
         assert_eq!(validate(&document), Ok(()));
     }
 }

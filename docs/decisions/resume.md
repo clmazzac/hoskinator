@@ -52,3 +52,26 @@ dev-dependency to a real one.
 
 **Drift detection is unchanged:** the existing `#[ignore]` test that checks the vendored schema
 against `rendercv --version` still owns catching a version bump. Re-vendoring is a manual step.
+
+## `yamlpatch` is pinned to a pre-release (Slice 9, #10)
+
+`yamlpatch` and `yamlpath` move from `1.29.0` to `1.30.0-rc1`.
+
+**The bug:** on 1.29, `resume.write` failed on its own output. Merging a sequence-valued Profile
+field over a key that already held one emitted text that no longer parsed, so the first write to any
+resume poisoned it and every later write returned `ResumeError::Patch`. `read` then `write` was not
+a round trip. `social_networks` is the field that triggers it in practice, because it is the only
+Profile field that is always a sequence of mappings.
+
+**Why a pre-release rather than a workaround:** removing the key before the merge also fixes it and
+needs no dependency change, but it moves the field to the end of the `cv:` header and re-emits it in
+flow style. That defeats the reason this file chose `yamlpath` and `yamlpatch` in the first place.
+A fix that is not format-preserving contradicts the decision it implements. The upstream fix leaves
+the field where the user put it, in the style the user wrote it.
+
+**Accepted cost:** a pre-release can change its API or be yanked. `1.29.0` is the newest stable and
+does not carry the fix, so the alternatives were this or a workaround that damages the file. Move to
+`1.30.0` when it ships.
+
+**Guarded by** `writing_twice_keeps_a_sequence_valued_profile_field_intact`, which writes, reads
+back, and writes again — the sequence the bug needed.
