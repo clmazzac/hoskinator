@@ -1,7 +1,7 @@
 //! Setting up the resume repository, and the GitHub account it lives on.
 //!
-//! GitHub is reached through the `gh` CLI when setting the repository up, and through a
-//! stored personal access token for pushes.
+//! GitHub is reached entirely through the `gh` CLI (docs/decisions/workspace.md): it sets up the
+//! repository and configures git's own credential helper for pushes.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -117,34 +117,14 @@ pub fn push(repository_path: &Path, branch: &str) -> Result<(), WorkspaceError> 
     )
 }
 
-/// Pushes every local branch to `origin`.
-pub fn push_all(repository_path: &Path) -> Result<(), WorkspaceError> {
-    push_refs(
-        repository_path,
-        &[
-            "push".into(),
-            "origin".into(),
-            "refs/heads/*:refs/heads/*".into(),
-        ],
-    )
-}
-
 fn push_refs(repository_path: &Path, arguments: &[String]) -> Result<(), WorkspaceError> {
     let mut command = Command::new("git");
+    // `gh` configures itself as git's credential helper for github.com on `gh auth login`
+    // (docs/decisions/workspace.md), so a plain push already authenticates.
     command
         .current_dir(repository_path)
-        .env("GIT_TERMINAL_PROMPT", "0");
-
-    // The `-c` option must come before the subcommand. The helper reads the token from the
-    // environment, so the token never appears on the command line or in the repository's own
-    // configuration.
-    if let Ok(Some(token)) = crate::github::read_token() {
-        command.arg("-c").arg(
-            "credential.helper=!f() { printf 'username=x-access-token\\npassword=%s\\n' \"$HOSKINATOR_GITHUB_TOKEN\"; }; f",
-        );
-        command.env("HOSKINATOR_GITHUB_TOKEN", token);
-    }
-    command.args(arguments);
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(arguments);
 
     let output = command.output().map_err(|source| WorkspaceError::Spawn {
         program: "git".to_string(),
@@ -159,20 +139,6 @@ fn push_refs(repository_path: &Path, arguments: &[String]) -> Result<(), Workspa
         reported = String::from_utf8_lossy(&output.stdout).trim().to_string();
     }
     Err(WorkspaceError::Command(reported))
-}
-
-/// Points `origin` at `url`, whether or not a remote is already set.
-pub fn connect_remote(repository_path: &Path, url: &str) -> Result<(), WorkspaceError> {
-    if remote(repository_path).is_some() {
-        run(
-            "git",
-            &["remote", "set-url", "origin", url],
-            repository_path,
-        )
-        .map(|_| ())
-    } else {
-        run("git", &["remote", "add", "origin", url], repository_path).map(|_| ())
-    }
 }
 
 /// Every repository the signed-in account owns, newest first.

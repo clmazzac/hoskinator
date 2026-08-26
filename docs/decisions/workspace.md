@@ -50,6 +50,12 @@ person.
 **Accepted cost:** `gh` must be installed and signed in. `workspace.status` reports both, so the
 screen offers what is actually available and names the command that fixes what is not.
 
+**Correction:** a later slice added a second path — a stored personal access token, used only for
+push credentials — alongside this one. It duplicated the account the screen showed, and its
+"create a repository" action pushed the whole current worktree into the new, empty repository,
+because it repointed `origin` there instead of cloning fresh. Removed: `gh` already configures its
+own git credential helper on `gh auth login`, so a plain push authenticates without it.
+
 ## Applications are tracked in the store, and imported by pasting (Slice 9, #10)
 
 An application holds company, position, status, date, listing, notes, and the branch its resume came

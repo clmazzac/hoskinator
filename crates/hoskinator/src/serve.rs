@@ -18,9 +18,9 @@ use jsonrpsee::RpcModule;
 
 use crate::rpc::{
     ActiveRepository, ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi,
-    EntryRpcServer, GithubApi, GithubRpcServer, JobDescriptionApi, JobDescriptionRpcServer,
-    ProfileApi, ProfileRpcServer, RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer,
-    ResumeApi, ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
+    EntryRpcServer, JobDescriptionApi, JobDescriptionRpcServer, ProfileApi, ProfileRpcServer,
+    RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi,
+    ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
     SectionRpcServer, WorkspaceApi, WorkspaceRpcServer,
 };
 
@@ -97,7 +97,6 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(RenderApi::new(active.clone()).into_rpc())?;
     module.merge(ApplicationApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(WorkspaceApi::new(active.clone()).into_rpc())?;
-    module.merge(GithubApi::new(active.get()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(active)).into_rpc())?;
 
     Ok(Router::new()
