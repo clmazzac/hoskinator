@@ -239,13 +239,15 @@ test("a wording dropped clear of the wording list reorders nothing", async ({ pa
   expect(await highlights(1)).toEqual(["RAVENSMOOR WORDING"]);
 });
 
-test("an entry dropped onto another entry's wording moves the entry", async ({ page }) => {
-  await resumeText(page, "Ravensmoor Analytics").dragTo(resumeText(page, "FIRST WORDING"));
+test("an entry dropped onto another entry's lower half lands after it", async ({ page }) => {
+  // The pointer rests on RAVENSMOOR WORDING, in the lower half of the Ravensmoor
+  // entry, so Helio Systems moves to the far end rather than before its target.
+  await resumeText(page, "Helio Systems").dragTo(resumeText(page, "RAVENSMOOR WORDING"));
 
   await expect
     .poll(() => entryTitles("Experience"))
     .toEqual(["Ravensmoor Analytics", "Helio Systems"]);
   await expect
-    .poll(async () => (await section("Experience")).entries[1].highlights)
-    .toEqual(["FIRST WORDING", "SECOND WORDING"]);
+    .poll(async () => (await section("Experience")).entries[0].highlights)
+    .toEqual(["RAVENSMOOR WORDING"]);
 });

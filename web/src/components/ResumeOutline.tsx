@@ -147,7 +147,10 @@ function ElementRow({
             event.stopPropagation();
             setTarget(index);
           }}
-          onDragLeave={() => setTarget(null)}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setTarget(null);
+          }}
           onDrop={(event) => {
             setTarget(null);
             const from = draggedElement(event);
@@ -163,10 +166,15 @@ function ElementRow({
             onChange(joinElements([...elements, wording]));
           }}
           className={cn(
-            "group flex cursor-grab items-center gap-1 rounded-sm border px-1.5 py-0.5 text-xs active:cursor-grabbing",
-            target === index && "border-ring bg-muted",
+            "relative group flex cursor-grab items-center gap-1 rounded-sm border px-1.5 py-0.5 text-xs active:cursor-grabbing",
           )}
         >
+          {target === index && (
+            <span
+              aria-hidden
+              className="absolute top-0 -left-[3px] h-full w-[2px] rounded-full bg-foreground"
+            />
+          )}
           {element}
           <RemoveButton
             label={`Remove ${element}`}
@@ -202,8 +210,9 @@ function EntryNode({
   onKeep: (text: string) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const [over, setOver] = useState(false);
-  const [wordingOver, setWordingOver] = useState<number | null>(null);
+  const [wordingGlow, setWordingGlow] = useState(false);
+  const [edge, setEdge] = useState<"before" | "after" | null>(null);
+  const [wordingAt, setWordingAt] = useState<number | null>(null);
   const shape = shapeOf(entry.fields);
   const { title, subtitle, dates } = entryLabel(shape, entry.fields);
   const details = ((entry.fields ?? {}) as Record<string, unknown>).details;
@@ -213,21 +222,41 @@ function EntryNode({
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      className={cn("border-b", over && "bg-muted/60 ring-1 ring-ring ring-inset")}
+      className={cn(
+        "border-b",
+        wordingGlow && "bg-muted/60 ring-1 ring-ring ring-inset",
+      )}
       onDragOver={(event: React.DragEvent) => {
-        if (!carriesEntryMove(event) && !carriesWording(event)) return;
+        // A sibling entry moves to the edge the pointer rests on; a bank wording always
+        // appends, so it lights the whole entry rather than promising a position.
+        if (carriesEntryMove(event)) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setEdge(edgeOf(event));
+          return;
+        }
+        if (!carriesWording(event)) return;
         event.preventDefault();
-        event.dataTransfer.dropEffect = carriesEntryMove(event) ? "move" : "copy";
-        setOver(true);
+        event.dataTransfer.dropEffect = "copy";
+        setWordingGlow(true);
       }}
-      onDragLeave={() => setOver(false)}
+      onDragLeave={(event: React.DragEvent) => {
+        // dragleave bubbles from children the pointer merely moved between.
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setWordingGlow(false);
+        setEdge(null);
+      }}
       onDrop={(event: React.DragEvent) => {
-        setOver(false);
+        const heldEdge = edge;
+        setWordingGlow(false);
+        setEdge(null);
         const from = draggedEntryMove(event);
         if (from !== null) {
           event.preventDefault();
           event.stopPropagation();
-          return onMoveEntry(section, from, entry.index);
+          const to = heldEdge === "after" ? entry.index + 1 : entry.index;
+          if (to !== from) return onMoveEntry(section, from, to);
+          return;
         }
         // An element of this entry that missed every chip is a reorder that landed nowhere.
         if (draggedElement(event)?.entry === entry.index) return;
@@ -248,6 +277,7 @@ function EntryNode({
         }
       }}
     >
+      {edge === "before" && <DropLine />}
       <div
         className="group flex items-baseline gap-1.5 pr-2"
         draggable
@@ -290,7 +320,7 @@ function EntryNode({
           <>
             {entry.highlights.map((highlight, at) => (
               <div key={at}>
-                {wordingOver === at && <DropLine />}
+                {wordingAt === at && <DropLine />}
                 <div
                   draggable
                   onDragStart={(event) => {
@@ -301,19 +331,22 @@ function EntryNode({
                     if (!carriesWordingMove(event)) return;
                     event.preventDefault();
                     event.stopPropagation();
-                    setWordingOver(at + (edgeOf(event) === "after" ? 1 : 0));
+                    setWordingAt(at + (edgeOf(event) === "after" ? 1 : 0));
                   }}
-                  onDragLeave={() => setWordingOver(null)}
+                  onDragLeave={(event) => {
+                    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                    setWordingAt(null);
+                  }}
                   onDrop={(event) => {
-                    const insertAt = wordingOver;
-                    setWordingOver(null);
+                    const insertAt = wordingAt;
+                    setWordingAt(null);
                     const from = draggedWordingMove(event);
-                    // A wording reorders inside its own entry only.
+                    // A wording reorders inside its own entry only. The daemon takes the
+                    // insertion index and settles the shift itself.
                     if (from === null || from.entry !== entry.index || insertAt === null) return;
                     event.preventDefault();
                     event.stopPropagation();
-                    const to = insertAt > from.at ? insertAt - 1 : insertAt;
-                    onMoveWording(section, entry.index, from.at, to);
+                    onMoveWording(section, entry.index, from.at, insertAt);
                   }}
                   className="group flex cursor-grab gap-1.5 py-1 pr-2 pl-9 active:cursor-grabbing"
                 >
@@ -338,10 +371,11 @@ function EntryNode({
                 </div>
               </div>
             ))}
-            {wordingOver === entry.highlights.length && <DropLine />}
+            {wordingAt === entry.highlights.length && <DropLine />}
           </>
         )}
       </CollapsibleContent>
+      {edge === "after" && <DropLine />}
     </Collapsible>
   );
 }
@@ -430,7 +464,11 @@ export default function ResumeOutline() {
               event.dataTransfer.dropEffect = "copy";
               setOver(section.name);
             }}
-            onDragLeave={() => setOver(null)}
+            onDragLeave={(event) => {
+              // dragleave bubbles from the rows the pointer merely moved between.
+              if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+              setOver(null);
+            }}
             onDrop={(event) => {
               const dragged = draggedEntry(event);
               setOver(null);
