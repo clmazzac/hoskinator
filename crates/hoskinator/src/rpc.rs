@@ -93,6 +93,8 @@ pub const RENDER_PANDOC_FAILED: i32 = -32031;
 pub const WORKSPACE_SHEET: i32 = -32032;
 /// The entry's type does not match the section it was placed into.
 pub const RESUME_SECTION_TYPE_MISMATCH: i32 = -32033;
+/// No resume repository is configured, or it has no GitHub remote to scope applications by.
+pub const APPLICATION_UNAVAILABLE: i32 = -32034;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -1172,6 +1174,14 @@ fn resume_unavailable() -> ErrorObjectOwned {
     )
 }
 
+fn applications_unavailable() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        APPLICATION_UNAVAILABLE,
+        "no resume repository is configured, or it has no GitHub remote yet",
+        None::<()>,
+    )
+}
+
 fn section_not_found(section: &str) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(
         SECTION_NOT_FOUND,
@@ -1223,18 +1233,42 @@ fn repository_rpc_error(error: RepositoryError) -> ErrorObjectOwned {
 /// Serves the application tracker from one store.
 pub struct ApplicationApi {
     store: Arc<Store>,
+    repository_path: ActiveRepository,
 }
 
 impl ApplicationApi {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<Store>, repository_path: ActiveRepository) -> Self {
+        Self {
+            store,
+            repository_path,
+        }
+    }
+
+    /// The `owner/name` of the resume repository currently active, used to scope applications.
+    async fn repository_scope(&self) -> RpcResult<String> {
+        let path = self
+            .repository_path
+            .get()
+            .ok_or_else(applications_unavailable)?;
+        tokio::task::spawn_blocking(move || {
+            workspace::status(Some(&path), None)
+                .remote_url
+                .and_then(|url| workspace::repository_slug(&url))
+        })
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(APPLICATION_IO, error.to_string(), None::<()>))?
+        .ok_or_else(applications_unavailable)
     }
 }
 
 #[async_trait]
 impl ApplicationRpcServer for ApplicationApi {
     async fn application_list(&self) -> RpcResult<Vec<Application>> {
-        self.store.applications().await.map_err(store_rpc_error)
+        let repository = self.repository_scope().await?;
+        self.store
+            .applications(&repository)
+            .await
+            .map_err(store_rpc_error)
     }
 
     async fn application_statuses(&self) -> RpcResult<Vec<String>> {
@@ -1242,8 +1276,9 @@ impl ApplicationRpcServer for ApplicationApi {
     }
 
     async fn application_create(&self, application: NewApplication) -> RpcResult<Application> {
+        let repository = self.repository_scope().await?;
         self.store
-            .create_application(&application)
+            .create_application(&application, &repository)
             .await
             .map_err(store_rpc_error)
     }
@@ -1600,6 +1635,7 @@ mod tests {
             RENDER_PANDOC_MISSING,
             RENDER_PANDOC_FAILED,
             RESUME_SECTION_TYPE_MISMATCH,
+            APPLICATION_UNAVAILABLE,
         ];
         assert!(codes.iter().all(|code| (-32099..=-32000).contains(code)));
         let unique: std::collections::HashSet<_> = codes.iter().collect();

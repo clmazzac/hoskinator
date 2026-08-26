@@ -9,7 +9,6 @@ import ResumeTree from "@/components/ResumeTree";
 import { Button } from "@/components/ui/button";
 import { isDark, setDark } from "@/lib/theme";
 import { repositorySlug } from "@/lib/utils";
-import { toCsv } from "@/lib/sheet";
 import {
   commitResume,
   listApplications,
@@ -17,15 +16,10 @@ import {
   repositoryState,
   repositoryStatus,
   workspaceStatus,
-  writeStagedFile,
   type Application,
   type Branch,
   type WorkspaceStatus,
 } from "@/rpc";
-
-/// Where the application tracker rides along in the repository, so it travels with git rather
-/// than living only in the local store.
-const APPLICATIONS_FILE = "applications.csv";
 
 export default function Home() {
   const [status, setStatus] = useState<WorkspaceStatus | null>(null);
@@ -60,13 +54,9 @@ export default function Home() {
   const saveAll = () => {
     setBusy(true);
     setNotice(null);
-    // Mirrors the tracker into the repo alongside resume.yaml. Best-effort: a failure here
-    // (e.g. no repository yet) must not stop the resume itself from saving.
-    writeStagedFile(APPLICATIONS_FILE, toCsv(applications))
-      .catch(() => null)
-      // The commit and the push fail for different reasons — a repository with no remote commits
-      // perfectly well — so a failed push must not read as a failed commit.
-      .then(() => commitResume("Update resume"))
+    // The commit and the push fail for different reasons — a repository with no remote commits
+    // perfectly well — so a failed push must not read as a failed commit.
+    commitResume("Update resume")
       .then(
         () =>
           (head ? pushBranch(head) : Promise.resolve(null)).then(
