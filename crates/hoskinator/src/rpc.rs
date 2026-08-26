@@ -361,6 +361,10 @@ pub trait ResumeRpc {
     #[method(name = "resume.move_entry")]
     async fn resume_move_entry(&self, section: String, from: usize, to: usize) -> RpcResult<()>;
 
+    /// Moves the section at `from` so it lands before the section that sat at `to`.
+    #[method(name = "resume.move_section")]
+    async fn resume_move_section(&self, from: usize, to: usize) -> RpcResult<()>;
+
     #[method(name = "resume.move_bullet")]
     async fn resume_move_bullet(
         &self,
@@ -759,6 +763,12 @@ impl ResumeRpcServer for ResumeApi {
         let path = self.repository_path()?;
         let profile = self.store.profile().await.map_err(store_rpc_error)?;
         self.operation(move || resume::move_entry(&path, &section, from, to, &profile))
+            .await
+    }
+
+    async fn resume_move_section(&self, from: usize, to: usize) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        self.operation(move || resume::move_section(&path, from, to))
             .await
     }
 

@@ -343,6 +343,10 @@ export function moveResumeBullet(
   return call<null>("resume.move_bullet", [section, entryIndex, from, to]);
 }
 
+export function moveResumeSection(from: number, to: number): Promise<null> {
+  return call<null>("resume.move_section", [from, to]);
+}
+
 export function placeSection(section: string): Promise<null> {
   return call<null>("resume.place_section", [section]);
 }

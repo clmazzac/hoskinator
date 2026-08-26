@@ -136,6 +136,22 @@ export function draggedSection(event: React.DragEvent): string | null {
   return event.dataTransfer.getData(SECTION_MIME) || null;
 }
 
+// What a drag of a Section already in the resume carries: where it sits.
+export const SECTION_MOVE_MIME = "application/x-hoskinator-section-move";
+
+export function startSectionMoveDrag(event: React.DragEvent, from: number): void {
+  event.dataTransfer.setData(SECTION_MOVE_MIME, String(from));
+  event.dataTransfer.effectAllowed = "move";
+}
+
+export function draggedSectionMove(event: React.DragEvent): number | null {
+  return readNumber(event.dataTransfer.getData(SECTION_MOVE_MIME));
+}
+
+export function carriesSectionMove(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(SECTION_MOVE_MIME);
+}
+
 export function carriesSection(event: React.DragEvent): boolean {
   return event.dataTransfer.types.includes(SECTION_MIME);
 }

@@ -699,6 +699,105 @@ pub fn move_bullet(
     )
 }
 
+/// Moves a section so it sits at final index `to` (the same contract as [`move_entry`]).
+///
+/// The section's lines move whole — comments directly above a section's key travel with it —
+/// because patching could only replace the sections mapping's value, which would flatten every
+/// comment inside it.
+pub fn move_section(repository_path: &Path, from: usize, to: usize) -> Result<(), ResumeError> {
+    let (path, document) = load(repository_path)?;
+    let missing = || ResumeError::NoSuchEntry {
+        section: SECTIONS_KEY.to_string(),
+        index: from.max(to),
+    };
+    let sections_route = yamlpath::Route::default()
+        .with_key(CV_KEY)
+        .with_key(SECTIONS_KEY);
+
+    // Ordered names, straight from the file's mapping order.
+    let parsed: yaml_serde::Value =
+        yaml_serde::from_str(document.source()).map_err(|source| ResumeError::Decode {
+            path: path.clone(),
+            source,
+        })?;
+    let names: Vec<String> = parsed
+        .get(CV_KEY)
+        .and_then(|cv| cv.get(SECTIONS_KEY))
+        .and_then(|sections| sections.as_mapping())
+        .map(|sections| {
+            sections
+                .iter()
+                .filter_map(|(name, _)| name.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if from >= names.len() || to > names.len() || from == to {
+        return Err(missing());
+    }
+
+    let source = document.source();
+    let start_of_line = |at: usize| source[..at].rfind('\n').map_or(0, |newline| newline + 1);
+
+    // Each section occupies whole lines from its key to the next key; the last runs to the
+    // end of the sections value.
+    let mut starts = Vec::with_capacity(names.len());
+    for name in &names {
+        let feature = document
+            .query_key_only(&sections_route.with_key(name.as_str()))
+            .map_err(|_| missing())?;
+        starts.push(start_of_line(feature.location.byte_span.0));
+    }
+    let end = match document.query_exact(&sections_route).ok().flatten() {
+        Some(feature) if source[feature.location.byte_span.1..].contains('\n') => {
+            source[feature.location.byte_span.1..].find('\n').unwrap() + feature.location.byte_span.1 + 1
+        }
+        Some(feature) => feature.location.byte_span.1,
+        None => return Err(missing()),
+    };
+
+    // A comment directly above the moved key belongs to that section: shift the boundary
+    // between it and the previous block, so the comment lines travel with their section.
+    loop {
+        let Some(newline) = source[..starts[from]].rfind('\n') else {
+            break;
+        };
+        let line = &source[newline + 1..starts[from]];
+        if line.trim_start().is_empty() || !line.trim_start().starts_with('#') {
+            break;
+        }
+        starts[from] = newline + 1;
+    }
+
+    let blocks: Vec<String> = (0..names.len())
+        .map(|at| {
+            let stop = starts.get(at + 1).copied().unwrap_or(end);
+            source[starts[at]..stop].to_owned()
+        })
+        .collect();
+
+    let mut order: Vec<usize> = (0..names.len()).collect();
+    order.remove(from);
+    order.insert(if to > from { to - 1 } else { to }, from);
+
+    let mut rebuilt = String::new();
+    for at in &order {
+        rebuilt.push_str(&blocks[*at]);
+    }
+    if !rebuilt.ends_with('\n') {
+        rebuilt.push('\n');
+    }
+    let rest = source[end..].strip_prefix('\n').unwrap_or(&source[end..]);
+
+    let updated = format!("{}{}{}", &source[..starts[0]], rebuilt, rest);
+
+    let as_json: Value = yaml_serde::from_str(&updated).map_err(|source| ResumeError::Decode {
+        path: path.clone(),
+        source,
+    })?;
+    validate(&as_json).map_err(ResumeError::Invalid)?;
+    std::fs::write(&path, updated).map_err(|source| ResumeError::Write { path, source })
+}
+
 fn entry_route<'a>(section: &'a str, entry_index: usize) -> yamlpath::Route<'a> {
     yamlpath::Route::default()
         .with_key(CV_KEY)
@@ -860,6 +959,80 @@ mod tests {
         assert!(written.contains("headline: Mathematician"));
         assert!(written.contains("# kept comment"));
         assert!(written.contains("Experience: []"));
+    }
+
+    #[test]
+    fn moving_a_section_reorders_the_file_and_keeps_its_comment() {
+        // `to` names the index in the original ordering the moved section lands before,
+        // matching [`move_entry`] — so 3 appends Experience to the end.
+        let text = "\
+cv:
+  sections:
+    # The experience block, hand placed.
+    Experience:
+      - company: Helio
+        position: Engineer
+        start_date: 2019-08
+        end_date: present
+    Education:
+      - institution: College
+        area: Computer Science
+        degree: BS
+        start_date: 2015-09
+        end_date: 2019-05
+    Skills:
+      - label: Languages
+        details: Rust, Go
+design:
+  theme: classic
+"
+        .to_string();
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(FILENAME), &text).unwrap();
+
+        move_section(dir.path(), 0, 3).unwrap();
+        let moved = read(dir.path()).unwrap();
+
+        let order = |text: &str| {
+            yaml_serde::from_str::<yaml_serde::Value>(text)
+                .unwrap()
+                .get("cv")
+                .unwrap()
+                .get("sections")
+                .unwrap()
+                .as_mapping()
+                .unwrap()
+                .iter()
+                .map(|(name, _)| name.as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&moved), vec!["Education", "Skills", "Experience"]);
+        // The comment rides with the section it describes.
+        let experience_at = moved.find("Experience").unwrap();
+        assert!(moved[..experience_at].contains("# The experience block"));
+        assert!(moved.contains("- company: Helio"));
+        // And it still validates against rendercv's schema.
+        let as_json: Value = yaml_serde::from_str(&moved).unwrap();
+        assert_eq!(validate(&as_json), Ok(()));
+
+        // Moving it back restores the original order.
+        move_section(dir.path(), 2, 0).unwrap();
+        assert_eq!(
+            order(&read(dir.path()).unwrap()),
+            vec!["Experience", "Education", "Skills"]
+        );
+    }
+
+    #[test]
+    fn moving_a_section_out_of_range_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(FILENAME), "cv:\n  sections:\n    Experience: []\n")
+            .unwrap();
+
+        assert!(matches!(
+            move_section(dir.path(), 3, 0),
+            Err(ResumeError::NoSuchEntry { .. })
+        ));
     }
 
     #[test]

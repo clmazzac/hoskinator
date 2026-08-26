@@ -13,18 +13,21 @@ import {
   carriesEntryMove,
   carriesEntryOfType,
   carriesSection,
+  carriesSectionMove,
   carriesWording,
   carriesWordingMove,
   draggedElement,
   draggedEntry,
   draggedEntryMove,
   draggedSection,
+  draggedSectionMove,
   draggedWording,
   draggedWordingMove,
   joinElements,
   splitElements,
   startElementDrag,
   startEntryMoveDrag,
+  startSectionMoveDrag,
   startWordingMoveDrag,
 } from "@/lib/placement";
 import { resumeStep, useReloadOnHistory } from "@/lib/history";
@@ -37,6 +40,7 @@ import {
   removeResumeBullet,
   moveResumeBullet,
   moveResumeEntry,
+  moveResumeSection,
   placeSection,
   removeResumeEntry,
   resumeOutline,
@@ -385,8 +389,10 @@ export default function ResumeOutline() {
   const [sectionTypes, setSectionTypes] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [sectionEdge, setSectionEdge] = useState<
+    { name: string; edge: "before" | "after" } | null
+  >(null);
   const [keeping, setKeeping] = useState<string | null>(null);
-
   const load = useCallback(() => {
     // A section's type lives in the store, not the resume outline, which only knows what a
     // section is already holding — the bank is what says what it's allowed to hold. Loaded
@@ -451,7 +457,7 @@ export default function ResumeOutline() {
         open={keeping !== null}
         onOpenChange={(shown) => !shown && setKeeping(null)}
       />
-      {sections.map((section) => {
+      {sections.map((section, index) => {
         // rendercv requires every entry in a section to share one shape, so a section only ever
         // accepts the one entry type it was created with.
         const sectionType = sectionTypes[section.name];
@@ -477,8 +483,38 @@ export default function ResumeOutline() {
               dropEntry(section.name, dragged.id);
             }}
           >
-            <div className="flex items-center gap-1.5 border-b px-2 py-1.5">
+            <div
+              className="group flex cursor-grab items-center gap-1.5 border-b px-2 py-1.5 active:cursor-grabbing"
+              draggable
+              onDragStart={(event) => {
+                event.stopPropagation();
+                startSectionMoveDrag(event, index);
+              }}
+              onDragOver={(event) => {
+                if (!carriesSectionMove(event)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = "move";
+                setSectionEdge({ name: section.name, edge: edgeOf(event) });
+              }}
+              onDragLeave={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                setSectionEdge(null);
+              }}
+              onDrop={(event) => {
+                const heldEdge = sectionEdge;
+                setSectionEdge(null);
+                const from = draggedSectionMove(event);
+                if (from === null || heldEdge?.name !== section.name) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const to = heldEdge.edge === "after" ? index + 1 : index;
+                if (to !== from && to !== from + 1) run(() => moveResumeSection(from, to));
+              }}
+            >
+              {sectionEdge?.name === section.name && sectionEdge.edge === "before" && <DropLine />}
               <span className="text-xs font-semibold">{section.name}</span>
+              {sectionEdge?.name === section.name && sectionEdge.edge === "after" && <DropLine />}
             </div>
             {section.entries.map((entry) => (
               <EntryNode
