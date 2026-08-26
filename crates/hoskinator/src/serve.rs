@@ -17,10 +17,10 @@ use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
 use crate::rpc::{
-    ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi, EntryRpcServer,
-    GithubApi, GithubRpcServer, JobDescriptionApi, JobDescriptionRpcServer, ProfileApi,
-    ProfileRpcServer, RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi,
-    ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
+    ActiveRepository, ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi,
+    EntryRpcServer, GithubApi, GithubRpcServer, JobDescriptionApi, JobDescriptionRpcServer,
+    ProfileApi, ProfileRpcServer, RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer,
+    ResumeApi, ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
     SectionRpcServer, WorkspaceApi, WorkspaceRpcServer,
 };
 
@@ -82,19 +82,23 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
 
 /// The daemon's routes, with every request passing the authenticator.
 fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, ServeError> {
+    // Shared so that switching repositories takes effect for every service immediately, rather
+    // than only on the next start.
+    let active = ActiveRepository::new(resume_repo);
+
     let mut module = RpcModule::new(());
-    module.merge(ProfileApi::new(Arc::clone(&store), resume_repo.clone()).into_rpc())?;
+    module.merge(ProfileApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(SectionApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(Arc::clone(&store)).into_rpc())?;
-    module.merge(ResumeApi::new(Arc::clone(&store), resume_repo.clone()).into_rpc())?;
-    module.merge(RenderApi::new(resume_repo.clone()).into_rpc())?;
+    module.merge(ResumeApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
+    module.merge(RenderApi::new(active.clone()).into_rpc())?;
     module.merge(ApplicationApi::new(Arc::clone(&store)).into_rpc())?;
-    module.merge(WorkspaceApi::new(resume_repo.clone()).into_rpc())?;
-    module.merge(GithubApi::new(resume_repo.clone()).into_rpc())?;
-    module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(resume_repo)).into_rpc())?;
+    module.merge(WorkspaceApi::new(active.clone()).into_rpc())?;
+    module.merge(GithubApi::new(active.get()).into_rpc())?;
+    module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(active)).into_rpc())?;
 
     Ok(Router::new()
         .route(RPC_PATH, post(dispatch))
