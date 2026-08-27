@@ -170,8 +170,9 @@ export default function Home() {
           )}
           <Button
             variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
+            size="icon-sm"
+            aria-label={dark ? "Switch to day theme" : "Switch to night theme"}
+            title={dark ? "Switch to day theme" : "Switch to night theme"}
             onClick={() => {
               const next = !dark;
               setDark(next);
@@ -179,7 +180,6 @@ export default function Home() {
             }}
           >
             {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
-            {dark ? "Day" : "Night"}
           </Button>
         </div>
       </header>

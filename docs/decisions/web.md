@@ -58,3 +58,12 @@ hidden in a form control.
 **Still a harness, not the product UI.** No styling and no selectable rows; the name is retyped into
 each control, because turning the list into something you click would be interaction design. Slice 9
 (#10) owns the real interface.
+
+## Icon-only controls stay icon-only
+
+A control that reads as an icon elsewhere in the header (the theme toggle, and any control like it)
+never gains a text label beside the icon. Use `aria-label` and `title` for the accessible name
+instead of visible text.
+
+**Why:** this has regressed more than once — a text label ("Day" / "Night") creeping back onto the
+theme toggle. Recording it here so it stops recurring.
