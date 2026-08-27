@@ -8,4 +8,5 @@ edition = "2024"
 repository = "https://github.com/clmazzac/hoskinator"
 
 [workspace.dependencies]
+hoskinator-ai = { path = "crates/ai" }
 hoskinator-core = { path = "crates/core" }

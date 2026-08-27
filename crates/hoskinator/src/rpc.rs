@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+#[cfg(feature = "ai")]
+use hoskinator_ai::Assessment;
 use hoskinator_core::application::{Application, NewApplication, STATUSES};
 use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
@@ -98,6 +100,12 @@ pub const RESUME_SECTION_TYPE_MISMATCH: i32 = -32033;
 pub const APPLICATION_UNAVAILABLE: i32 = -32034;
 /// The request named a Job Description that is not there.
 pub const JD_NOT_FOUND: i32 = -32035;
+/// The `ai` feature is compiled in, but no Anthropic API key is configured.
+#[cfg(feature = "ai")]
+pub const AI_UNCONFIGURED: i32 = -32036;
+/// A call to Claude failed.
+#[cfg(feature = "ai")]
+pub const AI_FAILED: i32 = -32037;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -220,6 +228,16 @@ pub trait JobDescriptionRpc {
 
     #[method(name = "jd.match")]
     async fn jd_match(&self, id: i64) -> RpcResult<MatchReport>;
+}
+
+/// Relevance/tone/flow judgment against a JD, plus rewrite suggestions — the qualitative half of
+/// the tailoring panel (`jd.match` is the deterministic half). Only registered when the `ai`
+/// feature is compiled in.
+#[cfg(feature = "ai")]
+#[rpc(server, client)]
+pub trait AiRpc {
+    #[method(name = "ai.assess")]
+    async fn ai_assess(&self, jd_id: i64) -> RpcResult<Assessment>;
 }
 
 #[rpc(server, client)]
@@ -490,6 +508,23 @@ pub struct JobDescriptionApi {
 }
 
 impl JobDescriptionApi {
+    pub fn new(store: Arc<Store>, repository_path: ActiveRepository) -> Self {
+        Self {
+            store,
+            repository_path,
+        }
+    }
+}
+
+/// Serves `ai.assess` against the configured resume and a stored JD.
+#[cfg(feature = "ai")]
+pub struct AiApi {
+    store: Arc<Store>,
+    repository_path: ActiveRepository,
+}
+
+#[cfg(feature = "ai")]
+impl AiApi {
     pub fn new(store: Arc<Store>, repository_path: ActiveRepository) -> Self {
         Self {
             store,
@@ -1080,6 +1115,33 @@ impl JobDescriptionRpcServer for JobDescriptionApi {
     }
 }
 
+#[cfg(feature = "ai")]
+#[async_trait]
+impl AiRpcServer for AiApi {
+    async fn ai_assess(&self, jd_id: i64) -> RpcResult<Assessment> {
+        let jd = self
+            .store
+            .job_description(jd_id)
+            .await
+            .map_err(store_rpc_error)?
+            .ok_or_else(|| jd_not_found(jd_id))?;
+        let path = self
+            .repository_path
+            .get()
+            .ok_or_else(|| unavailable(RESUME_UNAVAILABLE))?;
+        let resume_yaml = tokio::task::spawn_blocking(move || resume::read(&path))
+            .await
+            .map_err(|error| ErrorObjectOwned::owned(RESUME_IO, error.to_string(), None::<()>))?
+            .map_err(resume_rpc_error)?;
+
+        let config = hoskinator_ai::Config::from_env().ok_or_else(ai_unconfigured)?;
+        let transport = hoskinator_ai::AnthropicTransport::new(config.api_key);
+        hoskinator_ai::assess(&transport, &config.assess_model, &resume_yaml, &jd.text)
+            .await
+            .map_err(ai_rpc_error)
+    }
+}
+
 /// Maps a [`StoreError`] onto the code its variant belongs to.
 fn store_code_for(error: &StoreError) -> i32 {
     match error {
@@ -1191,6 +1253,20 @@ fn jd_not_found(id: i64) -> ErrorObjectOwned {
         format!("no job description #{id}"),
         None::<()>,
     )
+}
+
+#[cfg(feature = "ai")]
+fn ai_unconfigured() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        AI_UNCONFIGURED,
+        "no ANTHROPIC_API_KEY is configured",
+        None::<()>,
+    )
+}
+
+#[cfg(feature = "ai")]
+fn ai_rpc_error(error: hoskinator_ai::AssessError) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(AI_FAILED, source_message(&error), None::<()>)
 }
 
 fn section_not_found(section: &str) -> ErrorObjectOwned {

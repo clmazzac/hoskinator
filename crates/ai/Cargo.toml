@@ -1,9 +1,20 @@
 [package]
 name = "hoskinator-ai"
-description = "Hoskinator's optional AI layer: scoring, gap analysis, and drafting."
+description = "Hoskinator's optional AI layer: Anthropic-backed resume assessment."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait = "0.1"
 hoskinator-core = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -23,6 +23,8 @@ use crate::rpc::{
     ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
     SectionRpcServer, WorkspaceApi, WorkspaceRpcServer,
 };
+#[cfg(feature = "ai")]
+use crate::rpc::{AiApi, AiRpcServer};
 
 /// Port the daemon binds unless told otherwise.
 pub const DEFAULT_PORT: u16 = 8737;
@@ -105,6 +107,8 @@ fn router(
     module.merge(RenderApi::new(active.clone()).into_rpc())?;
     module.merge(ApplicationApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(WorkspaceApi::new(active.clone(), default_repository_root).into_rpc())?;
+    #[cfg(feature = "ai")]
+    module.merge(AiApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(active)).into_rpc())?;
 
     Ok(Router::new()
@@ -559,6 +563,29 @@ mod tests {
         )
         .await;
         assert_eq!(answer["error"]["code"], crate::rpc::JD_NOT_FOUND);
+    }
+
+    // Relies on the test process having no ANTHROPIC_API_KEY, same as CI (see .github/workflows).
+    #[cfg(feature = "ai")]
+    #[tokio::test]
+    async fn ai_assess_without_a_configured_key_answers_ai_unconfigured() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+        let jd = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"jd.create","params":[{"title":null,"text":"Anything"}]}"#,
+        )
+        .await;
+        let id = jd["result"]["id"].as_i64().unwrap();
+
+        let answer = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"ai.assess","params":[{id}]}}"#),
+        )
+        .await;
+        assert_eq!(answer["error"]["code"], crate::rpc::AI_UNCONFIGURED);
     }
 
     #[tokio::test]

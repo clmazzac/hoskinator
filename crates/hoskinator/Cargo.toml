@@ -5,9 +5,14 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 
+[features]
+# Built in with a key present, or absent entirely; no separate AI process (ADR-0005).
+ai = ["dep:hoskinator-ai"]
+
 [dependencies]
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
+hoskinator-ai = { workspace = true, optional = true }
 hoskinator-core = { workspace = true }
 jsonrpsee = { version = "0.26", features = ["http-client", "macros", "server"] }
 mime_guess = "2"
