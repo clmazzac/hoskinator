@@ -278,9 +278,8 @@ export default function ResumeTree({
       });
   };
 
-  const addChild = (parent: string) => {
-    const slug = parent.replace(/^archetype\//, "");
-    branchName(slug, label)
+  const add = (slug: string, note: string | null, parent: string) =>
+    branchName(slug, note)
       .then((name) => createBranch(name, parent).then(() => checkoutBranch(name)))
       .then(() => {
         setAdding(null);
@@ -288,18 +287,9 @@ export default function ResumeTree({
         refresh();
       })
       .catch((failure: Error) => setError(failure.message));
-  };
 
-  const addArchetype = () => {
-    branchName(label, null)
-      .then((name) => createBranch(name, trunk?.name ?? "main").then(() => checkoutBranch(name)))
-      .then(() => {
-        setAdding(null);
-        setLabel("");
-        refresh();
-      })
-      .catch((failure: Error) => setError(failure.message));
-  };
+  const addChild = (parent: string) => add(parent.replace(/^archetype\//, ""), label, parent);
+  const addArchetype = () => add(label, null, trunk?.name ?? "main");
 
   const remove = (name: string) => {
     setBusy(`delete:${name}`);

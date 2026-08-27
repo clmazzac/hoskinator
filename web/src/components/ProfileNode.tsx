@@ -149,10 +149,7 @@ export default function ProfileNode() {
               </Row>
             ))}
 
-            <div className="flex items-baseline gap-2 py-0.5">
-              <span className="w-20 shrink-0 text-right text-[10px] text-muted-foreground">
-                connections
-              </span>
+            <Row label="connections">
               <div className="flex flex-1 flex-col gap-1">
                 {networks.length === 0 && (
                   <span className="text-xs text-muted-foreground/60">None.</span>
@@ -232,7 +229,7 @@ export default function ProfileNode() {
                   Add connection
                 </Button>
               </div>
-            </div>
+            </Row>
           </div>
         )}
       </CollapsibleContent>

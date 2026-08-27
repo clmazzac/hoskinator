@@ -34,6 +34,17 @@ const SWATCH: Record<string, string> = {
   rejected: "bg-status-rejected/15 text-status-rejected",
 };
 
+export const BLANK_APPLICATION: NewApplication = {
+  company: "",
+  position: "",
+  status: "draft",
+  date_applied: null,
+  listing_url: null,
+  resume_branch: null,
+  notes: null,
+  jd_text: null,
+};
+
 function fields(application: Application): NewApplication {
   const { id: _id, created_at: _created, ...rest } = application;
   return rest;
@@ -84,16 +95,9 @@ export default function ApplicationTracker({
     );
 
   const add = () =>
-    createApplication({
-      company: "",
-      position: "",
-      status: "draft",
-      date_applied: null,
-      listing_url: null,
-      resume_branch: null,
-      notes: null,
-      jd_text: null,
-    }).then(onChanged, (failure: Error) => setError(failure.message));
+    createApplication(BLANK_APPLICATION).then(onChanged, (failure: Error) =>
+      setError(failure.message),
+    );
 
   return (
     <section className="rounded-lg border bg-card">

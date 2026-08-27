@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { FilePlus2, FolderOpen, GitBranch, Loader2, PackagePlus } from "lucide-react";
 
+import { BLANK_APPLICATION } from "@/components/ApplicationTracker";
 import { arrange } from "@/components/ResumeTree";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,16 +108,7 @@ export default function LaunchDialog({
   const createApplicationDraft = () => {
     setBusy(true);
     setError(null);
-    createApplication({
-      company: "",
-      position: "",
-      status: "draft",
-      date_applied: null,
-      listing_url: null,
-      resume_branch: null,
-      notes: null,
-      jd_text: null,
-    }).then(
+    createApplication(BLANK_APPLICATION).then(
       () => {
         setBusy(false);
         close(false);
