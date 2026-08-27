@@ -482,37 +482,6 @@ export function sheetCsv(): Promise<string> {
   return call<string>("workspace.sheet_csv", []);
 }
 
-export interface GithubStatus {
-  connected: boolean;
-  login: string | null;
-}
-
-export interface GithubRepository {
-  name_with_owner: string;
-  private: boolean;
-}
-
-export function githubStatus(): Promise<GithubStatus> {
-  return call<GithubStatus>("github.status", []);
-}
-
-export function authorizeGithub(token: string): Promise<GithubStatus> {
-  return call<GithubStatus>("github.authorize", [token]);
-}
-
-export function deauthorizeGithub(): Promise<null> {
-  return call<null>("github.deauthorize", []);
-}
-
-export function githubRepositories(): Promise<GithubRepository[]> {
-  return call<GithubRepository[]>("github.repositories", []);
-}
-
-/** Points `origin` at `name` on GitHub, creating it private first when `create` is set. */
-export function connectGithub(name: string, create: boolean): Promise<string> {
-  return call<string>("github.connect", [name, create]);
-}
-
 export function pushBranch(branch: string): Promise<null> {
   return call<null>("workspace.push", [branch]);
 }

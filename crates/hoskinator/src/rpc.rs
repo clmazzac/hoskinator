@@ -8,7 +8,6 @@ use std::sync::{Arc, RwLock};
 use hoskinator_core::application::{Application, NewApplication, STATUSES};
 use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
-use hoskinator_core::github::{self, GithubError};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::lineage::{self, Lineage};
 use hoskinator_core::profile::Profile;
@@ -94,10 +93,6 @@ pub const RENDER_PANDOC_FAILED: i32 = -32031;
 pub const WORKSPACE_SHEET: i32 = -32032;
 /// The entry's type does not match the section it was placed into.
 pub const RESUME_SECTION_TYPE_MISMATCH: i32 = -32033;
-/// The stored GitHub token was rejected.
-pub const GITHUB_UNAUTHORIZED: i32 = -32034;
-/// A GitHub API request failed, or no token is stored.
-pub const GITHUB_API: i32 = -32035;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -314,44 +309,6 @@ pub trait WorkspaceRpc {
     /// Fetches the linked sheet's first tab as CSV.
     #[method(name = "workspace.sheet_csv")]
     async fn workspace_sheet_csv(&self) -> RpcResult<String>;
-}
-
-/// Whether a GitHub account is connected, and its login.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct GithubStatus {
-    pub connected: bool,
-    pub login: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct GithubRepository {
-    /// The repository as `owner/name`.
-    pub name_with_owner: String,
-    pub private: bool,
-}
-
-#[rpc(server, client)]
-pub trait GithubRpc {
-    /// Whether a GitHub token is stored, and whose it is.
-    #[method(name = "github.status")]
-    async fn github_status(&self) -> RpcResult<GithubStatus>;
-
-    /// Checks the token with GitHub, remembers it, and reports the login it belongs to.
-    #[method(name = "github.authorize")]
-    async fn github_authorize(&self, token: String) -> RpcResult<GithubStatus>;
-
-    /// Forgets the stored token.
-    #[method(name = "github.deauthorize")]
-    async fn github_deauthorize(&self) -> RpcResult<()>;
-
-    /// Repositories of the authorized account, newest push first.
-    #[method(name = "github.repositories")]
-    async fn github_repositories(&self) -> RpcResult<Vec<GithubRepository>>;
-
-    /// Points `origin` of the resume repository at GitHub under `name`, creating that
-    /// repository private first when asked. Returns the repository as `owner/name`.
-    #[method(name = "github.connect")]
-    async fn github_connect(&self, name: String, create: bool) -> RpcResult<String>;
 }
 
 #[rpc(server, client)]
@@ -1455,122 +1412,6 @@ fn workspace_rpc_error(error: WorkspaceError) -> ErrorObjectOwned {
         _ => WORKSPACE_SETUP,
     };
     ErrorObjectOwned::owned(code, source_message(&error), None::<()>)
-}
-
-/// Runs a blocking GitHub call and maps its failure onto a JSON-RPC error.
-async fn github_blocking<T, F>(operation: F) -> RpcResult<T>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, GithubError> + Send + 'static,
-{
-    tokio::task::spawn_blocking(operation)
-        .await
-        .map_err(|error| ErrorObjectOwned::owned(GITHUB_API, error.to_string(), None::<()>))?
-        .map_err(github_rpc_error)
-}
-
-fn github_rpc_error(error: GithubError) -> ErrorObjectOwned {
-    let code = match error {
-        GithubError::Unauthorized => GITHUB_UNAUTHORIZED,
-        _ => GITHUB_API,
-    };
-    ErrorObjectOwned::owned(code, source_message(&error), None::<()>)
-}
-
-/// Serves the GitHub account and the private repository a resume syncs to.
-pub struct GithubApi {
-    repository_path: Option<PathBuf>,
-}
-
-impl GithubApi {
-    pub fn new(repository_path: Option<PathBuf>) -> Self {
-        Self { repository_path }
-    }
-}
-
-#[async_trait]
-impl GithubRpcServer for GithubApi {
-    async fn github_status(&self) -> RpcResult<GithubStatus> {
-        github_blocking(|| {
-            Ok(match github::status()? {
-                Some(login) => GithubStatus {
-                    connected: true,
-                    login: Some(login),
-                },
-                None => GithubStatus {
-                    connected: false,
-                    login: None,
-                },
-            })
-        })
-        .await
-    }
-
-    async fn github_authorize(&self, token: String) -> RpcResult<GithubStatus> {
-        github_blocking(move || {
-            let login = github::authorize(&token)?;
-            Ok(GithubStatus {
-                connected: true,
-                login: Some(login),
-            })
-        })
-        .await
-    }
-
-    async fn github_deauthorize(&self) -> RpcResult<()> {
-        github_blocking(github::clear_token).await
-    }
-
-    async fn github_repositories(&self) -> RpcResult<Vec<GithubRepository>> {
-        let token = stored_token().await?;
-        let owned = github_blocking(move || github::repositories(&token)).await?;
-        Ok(owned
-            .into_iter()
-            .map(|repository| GithubRepository {
-                name_with_owner: repository.name_with_owner,
-                private: repository.private,
-            })
-            .collect())
-    }
-
-    async fn github_connect(&self, name: String, create: bool) -> RpcResult<String> {
-        let path = self.repository_path.clone().ok_or_else(|| {
-            ErrorObjectOwned::owned(
-                WORKSPACE_SETUP,
-                "no resume repository is configured",
-                None::<()>,
-            )
-        })?;
-        let token = stored_token().await?;
-        let full_name = if create {
-            github_blocking(move || github::create_repository(&token, &name)).await?
-        } else {
-            // A bare name lands in the account's own namespace.
-            match name.trim().trim_end_matches(".git").split_once('/') {
-                Some(_) => name.trim().trim_end_matches(".git").to_string(),
-                None => {
-                    let login = github_blocking(move || github::verify(&token)).await?;
-                    format!("{}/{}", login, name.trim().trim_end_matches(".git"))
-                }
-            }
-        };
-        let url = format!("https://github.com/{full_name}.git");
-        github_blocking(move || {
-            workspace::connect_remote(&path, &url)
-                .and_then(|()| workspace::push_all(&path))
-                .map_err(|error| GithubError::Api(error.to_string()))
-        })
-        .await?;
-        Ok(full_name)
-    }
-}
-
-/// The stored token, or a JSON-RPC error explaining there is none.
-async fn stored_token() -> RpcResult<String> {
-    github_blocking(|| {
-        github::read_token()?.ok_or_else(|| GithubError::Api("no GitHub token is stored".into()))
-    })
-    .await
 }
 
 #[cfg(test)]
