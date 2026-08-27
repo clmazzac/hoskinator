@@ -121,16 +121,9 @@ export function parseSheet(text: string): NewApplication[] {
       COLUMNS[field].some((candidate) => heading === candidate || heading.includes(candidate)),
     );
 
-  const at = {
-    company: columnFor("company"),
-    position: columnFor("position"),
-    status: columnFor("status"),
-    date_applied: columnFor("date_applied"),
-    listing_url: columnFor("listing_url"),
-    resume_branch: columnFor("resume_branch"),
-    notes: columnFor("notes"),
-    jd_text: columnFor("jd_text"),
-  };
+  const at = Object.fromEntries(
+    (Object.keys(COLUMNS) as (keyof NewApplication)[]).map((field) => [field, columnFor(field)]),
+  ) as Record<keyof NewApplication, number>;
 
   const read = (row: string[], index: number) =>
     index >= 0 && index < row.length ? row[index] : "";
