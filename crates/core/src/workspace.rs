@@ -357,7 +357,10 @@ mod tests {
 
     #[test]
     fn a_bare_owner_and_name_matches_itself() {
-        assert!(same_repository("clmazzac/resume-store", "clmazzac/resume-store"));
+        assert!(same_repository(
+            "clmazzac/resume-store",
+            "clmazzac/resume-store"
+        ));
     }
 
     #[test]
@@ -378,7 +381,10 @@ mod tests {
 
     #[test]
     fn comparison_is_case_insensitive() {
-        assert!(same_repository("Clmazzac/Resume-Store", "clmazzac/resume-store"));
+        assert!(same_repository(
+            "Clmazzac/Resume-Store",
+            "clmazzac/resume-store"
+        ));
     }
 
     #[test]
