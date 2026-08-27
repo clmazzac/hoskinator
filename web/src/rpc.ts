@@ -108,6 +108,8 @@ export interface Entry {
   entry_type: string;
   fields: unknown;
   created_at: string;
+  /** Free-write notes about this job or project — never rendercv input, never in a resume.yaml. */
+  braindump: string | null;
 }
 
 export function createEntry(entryType: string, fields: unknown): Promise<Entry> {
@@ -128,6 +130,10 @@ export function eligibleEntries(section: string): Promise<Entry[]> {
 
 export function updateEntry(id: number, fields: unknown): Promise<Entry> {
   return call<Entry>("entry.update", [id, fields]);
+}
+
+export function setBraindump(id: number, text: string | null): Promise<Entry> {
+  return call<Entry>("entry.set_braindump", [id, text]);
 }
 
 export function deleteEntry(id: number): Promise<null> {

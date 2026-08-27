@@ -28,6 +28,7 @@ import {
   eligibleEntries,
   listBullets,
   listSections,
+  setBraindump,
   updateEntry,
   updateVariant,
   type Bullet,
@@ -266,6 +267,29 @@ function EntryFields({ entry, onEdited }: { entry: Entry; onEdited: () => void }
   );
 }
 
+// A free-write scratchpad — never rendercv input, never in a resume.yaml.
+function BraindumpEditor({ entry, onEdited }: { entry: Entry; onEdited: () => void }) {
+  const commit = (next: string) => {
+    const was = entry.braindump;
+    return step(
+      () => setBraindump(entry.id, next || null),
+      () => setBraindump(entry.id, was),
+    ).then(onEdited);
+  };
+
+  return (
+    <div className="flex items-start gap-1 py-1 pr-2 pl-12">
+      <EditableText
+        value={entry.braindump ?? ""}
+        onCommit={commit}
+        placeholder="Notes — not shown on the resume."
+        className="flex-1 text-xs leading-snug"
+        multiline
+      />
+    </div>
+  );
+}
+
 function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) {
   const [open, setOpen] = useState(false);
   const { title, subtitle, dates } = entryLabel(entry.entry_type, entry.fields);
@@ -297,6 +321,7 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
 
       <CollapsibleContent>
         <EntryFields entry={entry} onEdited={onEdited} />
+        {hasBullets && <BraindumpEditor entry={entry} onEdited={onEdited} />}
         {elements.map((_, index) => (
           <ElementNode
             key={index}
