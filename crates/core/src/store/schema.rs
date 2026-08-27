@@ -77,5 +77,6 @@ diesel::table! {
         notes -> Nullable<Text>,
         jd_text -> Nullable<Text>,
         created_at -> Text,
+        repository -> Text,
     }
 }

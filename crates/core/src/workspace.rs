@@ -261,3 +261,42 @@ pub fn remember_repository(config_path: &Path, repository: &Path) -> Result<(), 
     }
     std::fs::write(config_path, written).map_err(WorkspaceError::Config)
 }
+
+/// The `owner/name` a GitHub remote URL names, or `None` if it doesn't look like one. Used to
+/// scope data that belongs to one resume repository — applications, primarily.
+pub fn repository_slug(remote_url: &str) -> Option<String> {
+    let normalized = remote_url.trim().trim_end_matches(".git").replace(':', "/");
+    let mut parts: Vec<&str> = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let name = parts.pop()?;
+    let owner = parts.pop()?;
+    Some(format!("{owner}/{name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_https_remote_names_owner_and_repository() {
+        assert_eq!(
+            repository_slug("https://github.com/clmazzac/resume-store.git"),
+            Some("clmazzac/resume-store".to_string())
+        );
+    }
+
+    #[test]
+    fn an_ssh_remote_names_owner_and_repository() {
+        assert_eq!(
+            repository_slug("git@github.com:clmazzac/resume-store.git"),
+            Some("clmazzac/resume-store".to_string())
+        );
+    }
+
+    #[test]
+    fn a_url_with_no_owner_segment_is_not_a_slug() {
+        assert_eq!(repository_slug("resume-store"), None);
+    }
+}

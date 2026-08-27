@@ -3,6 +3,9 @@
 //! The tracker a user would otherwise keep in a spreadsheet. An application names the branch its
 //! resume came from, which is the only link between a posting and a version of the resume — the
 //! repository holds no reference back (ADR-0001).
+//!
+//! Tracked in the store, not in the repository (docs/decisions/workspace.md). Each is scoped to
+//! the resume repository it was tracked against.
 
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -50,15 +53,17 @@ pub struct NewApplication {
 }
 
 impl Store {
-    /// Saves an application.
+    /// Saves an application, scoped to the resume repository currently in use.
     pub async fn create_application(
         &self,
         application: &NewApplication,
+        repository: &str,
     ) -> Result<Application, StoreError> {
         let row = application.clone();
+        let repository = repository.to_string();
         self.with_connection(move |connection| {
             diesel::insert_into(application_table::table)
-                .values(row)
+                .values((application_table::repository.eq(repository), row))
                 .returning(Application::as_returning())
                 .get_result(connection)
                 .map_err(StoreError::WriteApplication)
@@ -66,10 +71,12 @@ impl Store {
         .await
     }
 
-    /// Every application, newest first.
-    pub async fn applications(&self) -> Result<Vec<Application>, StoreError> {
+    /// Every application tracked against `repository`, newest first.
+    pub async fn applications(&self, repository: &str) -> Result<Vec<Application>, StoreError> {
+        let repository = repository.to_string();
         self.with_connection(move |connection| {
             application_table::table
+                .filter(application_table::repository.eq(repository))
                 .order(application_table::id.desc())
                 .select(Application::as_select())
                 .load(connection)
@@ -104,5 +111,89 @@ impl Store {
                 .map_err(StoreError::WriteApplication)
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use tempfile::TempDir;
+
+    async fn open_temp_store() -> (TempDir, Store) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("store").join("hoskinator.db");
+        let store = Store::open(&path).await.expect("opening the store");
+        (dir, store)
+    }
+
+    fn sample(company: &str) -> NewApplication {
+        NewApplication {
+            company: company.to_string(),
+            position: "Engineer".to_string(),
+            status: "draft".to_string(),
+            date_applied: None,
+            listing_url: None,
+            resume_branch: None,
+            notes: None,
+            jd_text: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_created_application_carries_the_fields_it_was_given() {
+        let (_dir, store) = open_temp_store().await;
+
+        let created = store
+            .create_application(&sample("Acme"), "owner/one")
+            .await
+            .unwrap();
+
+        assert_eq!(created.company, "Acme");
+        assert_eq!(created.position, "Engineer");
+        assert_eq!(created.status, "draft");
+    }
+
+    #[tokio::test]
+    async fn an_application_is_scoped_to_the_repository_it_was_created_against() {
+        let (_dir, store) = open_temp_store().await;
+
+        store
+            .create_application(&sample("Acme"), "owner/one")
+            .await
+            .unwrap();
+
+        let one = store.applications("owner/one").await.unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].company, "Acme");
+
+        let other = store.applications("owner/two").await.unwrap();
+        assert!(other.is_empty(), "got {other:?}");
+    }
+
+    #[tokio::test]
+    async fn switching_repositories_does_not_carry_applications_along() {
+        let (_dir, store) = open_temp_store().await;
+
+        store
+            .create_application(&sample("Old Co"), "owner/old-repo")
+            .await
+            .unwrap();
+        store
+            .create_application(&sample("New Co"), "owner/new-repo")
+            .await
+            .unwrap();
+
+        let old_repo = store.applications("owner/old-repo").await.unwrap();
+        let new_repo = store.applications("owner/new-repo").await.unwrap();
+
+        assert_eq!(
+            old_repo.iter().map(|a| &a.company).collect::<Vec<_>>(),
+            vec!["Old Co"]
+        );
+        assert_eq!(
+            new_repo.iter().map(|a| &a.company).collect::<Vec<_>>(),
+            vec!["New Co"]
+        );
     }
 }

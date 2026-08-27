@@ -70,3 +70,13 @@ by name. Export writes the same shape back, so the sheet stays usable beside the
 **Status is the one chromatic thing in the app.** Four statuses read at a glance are categorical
 data, and a grey ramp cannot separate four categories the way hue can. Everything else stays
 achromatic.
+
+**Scoped to the repository, not to git.** Every application carries the `owner/name` of the
+GitHub repository it was tracked against (`workspace::repository_slug`, read off the `origin`
+remote), and every read and write is filtered by it. A repository holds no store of its own
+(ADR-0001), so the alternative — one global list — meant starting a second repository showed the
+first one's applications, and an application never really belongs to a branch (a company might see
+several resumes before one is sent). The GitHub identity is the scope key rather than the local
+checkout's path, because the path can change — a fresh clone, a different machine — while the
+repository on GitHub does not. Applications are not written into the repository itself; the CSV
+export is a manual, one-shot action, not something `Save & push` carries along automatically.

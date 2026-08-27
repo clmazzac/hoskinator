@@ -95,7 +95,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(JobDescriptionApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(ResumeApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(RenderApi::new(active.clone()).into_rpc())?;
-    module.merge(ApplicationApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(ApplicationApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(WorkspaceApi::new(active.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(active)).into_rpc())?;
 
@@ -842,6 +842,59 @@ mod tests {
         .await;
 
         assert!(found["result"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn applications_are_unavailable_without_a_repository_with_a_github_remote() {
+        let no_repository = call(
+            test_router().await.1,
+            r#"{"jsonrpc":"2.0","id":1,"method":"application.list","params":[]}"#,
+        )
+        .await;
+        assert_eq!(
+            no_repository["error"]["code"],
+            crate::rpc::APPLICATION_UNAVAILABLE
+        );
+
+        // A repository exists on disk, but `git remote` was never set — there is nothing to
+        // scope applications by.
+        let (dir, router) = repository_router().await;
+        git2::Repository::init(dir.path().join("resume")).unwrap();
+        let no_remote = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"application.list","params":[]}"#,
+        )
+        .await;
+        assert_eq!(
+            no_remote["error"]["code"],
+            crate::rpc::APPLICATION_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
+    async fn applications_are_scoped_to_the_repository_s_github_remote() {
+        let (dir, router) = repository_router().await;
+        let repo_path = dir.path().join("resume");
+        let repo = git2::Repository::init(&repo_path).unwrap();
+        repo.remote("origin", "https://github.com/tester/resumes.git")
+            .unwrap();
+
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"application.create","params":[
+                {"company":"Acme","position":"Engineer","status":"draft","date_applied":null,
+                 "listing_url":null,"resume_branch":null,"notes":null,"jd_text":null}]}"#,
+        )
+        .await;
+        assert_eq!(created["result"]["company"], "Acme", "got {created}");
+
+        let listed = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":2,"method":"application.list","params":[]}"#,
+        )
+        .await;
+        assert_eq!(listed["result"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["result"][0]["company"], "Acme");
     }
 
     #[tokio::test]
