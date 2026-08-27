@@ -218,110 +218,87 @@ enum RepositoryAction {
     Log,
 }
 
+/// Awaits a fallible action and boxes its error for `main`'s uniform result type.
+async fn run<E: std::error::Error + 'static>(
+    action: impl std::future::Future<Output = Result<(), E>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    action.await.map_err(Into::into)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let arguments = Cli::parse();
     let port = arguments.port;
     let result: Result<(), Box<dyn std::error::Error>> = match arguments.command {
-        Command::Serve => serve::run(port).await.map_err(Into::into),
+        Command::Serve => run(serve::run(port)).await,
         Command::Profile { action } => match action {
-            ProfileAction::Get => cli::profile_get(port).await.map_err(Into::into),
-            ProfileAction::Set => cli::profile_set(port).await.map_err(Into::into),
+            ProfileAction::Get => run(cli::profile_get(port)).await,
+            ProfileAction::Set => run(cli::profile_set(port)).await,
         },
         Command::Section { action } => match action {
             SectionAction::Create { name, entry_type } => {
-                cli::section_create(port, &name, entry_type)
-                    .await
-                    .map_err(Into::into)
+                run(cli::section_create(port, &name, entry_type)).await
             }
-            SectionAction::List => cli::section_list(port).await.map_err(Into::into),
-            SectionAction::Rename { name, new_name } => cli::section_rename(port, &name, &new_name)
-                .await
-                .map_err(Into::into),
+            SectionAction::List => run(cli::section_list(port)).await,
+            SectionAction::Rename { name, new_name } => {
+                run(cli::section_rename(port, &name, &new_name)).await
+            }
             SectionAction::Retype { name, entry_type } => {
-                cli::section_retype(port, &name, entry_type)
-                    .await
-                    .map_err(Into::into)
+                run(cli::section_retype(port, &name, entry_type)).await
             }
-            SectionAction::Delete { name } => {
-                cli::section_delete(port, &name).await.map_err(Into::into)
-            }
+            SectionAction::Delete { name } => run(cli::section_delete(port, &name)).await,
         },
         Command::Entry { action } => match action {
-            EntryAction::Create { entry_type } => cli::entry_create(port, entry_type)
-                .await
-                .map_err(Into::into),
-            EntryAction::Get { id } => cli::entry_get(port, id).await.map_err(Into::into),
-            EntryAction::List { entry_type } => {
-                cli::entry_list(port, entry_type).await.map_err(Into::into)
-            }
-            EntryAction::Eligible { section } => cli::entry_eligible(port, &section)
-                .await
-                .map_err(Into::into),
-            EntryAction::Update { id } => cli::entry_update(port, id).await.map_err(Into::into),
-            EntryAction::Delete { id } => cli::entry_delete(port, id).await.map_err(Into::into),
+            EntryAction::Create { entry_type } => run(cli::entry_create(port, entry_type)).await,
+            EntryAction::Get { id } => run(cli::entry_get(port, id)).await,
+            EntryAction::List { entry_type } => run(cli::entry_list(port, entry_type)).await,
+            EntryAction::Eligible { section } => run(cli::entry_eligible(port, &section)).await,
+            EntryAction::Update { id } => run(cli::entry_update(port, id)).await,
+            EntryAction::Delete { id } => run(cli::entry_delete(port, id)).await,
         },
         Command::Bullet { action } => match action {
             BulletAction::Create {
                 entry_id,
                 text,
                 note,
-            } => cli::bullet_create(port, entry_id, &text, note)
-                .await
-                .map_err(Into::into),
-            BulletAction::Get { id } => cli::bullet_get(port, id).await.map_err(Into::into),
-            BulletAction::List { entry_id } => {
-                cli::bullet_list(port, entry_id).await.map_err(Into::into)
-            }
-            BulletAction::Move { id, position } => cli::bullet_move(port, id, position)
-                .await
-                .map_err(Into::into),
-            BulletAction::Delete { id } => cli::bullet_delete(port, id).await.map_err(Into::into),
+            } => run(cli::bullet_create(port, entry_id, &text, note)).await,
+            BulletAction::Get { id } => run(cli::bullet_get(port, id)).await,
+            BulletAction::List { entry_id } => run(cli::bullet_list(port, entry_id)).await,
+            BulletAction::Move { id, position } => run(cli::bullet_move(port, id, position)).await,
+            BulletAction::Delete { id } => run(cli::bullet_delete(port, id)).await,
         },
         Command::Variant { action } => match action {
             VariantAction::Create {
                 bullet_id,
                 text,
                 note,
-            } => cli::variant_create(port, bullet_id, &text, note)
-                .await
-                .map_err(Into::into),
-            VariantAction::Update { id, text, note } => cli::variant_update(port, id, text, note)
-                .await
-                .map_err(Into::into),
-            VariantAction::SetDefault { id } => {
-                cli::variant_set_default(port, id).await.map_err(Into::into)
+            } => run(cli::variant_create(port, bullet_id, &text, note)).await,
+            VariantAction::Update { id, text, note } => {
+                run(cli::variant_update(port, id, text, note)).await
             }
-            VariantAction::Delete { id } => cli::variant_delete(port, id).await.map_err(Into::into),
+            VariantAction::SetDefault { id } => run(cli::variant_set_default(port, id)).await,
+            VariantAction::Delete { id } => run(cli::variant_delete(port, id)).await,
         },
-        Command::Search { query } => cli::search(port, &query).await.map_err(Into::into),
+        Command::Search { query } => run(cli::search(port, &query)).await,
         Command::JobDescription { action } => match action {
-            JobDescriptionAction::Create => cli::jd_create(port).await.map_err(Into::into),
-            JobDescriptionAction::Get { id } => cli::jd_get(port, id).await.map_err(Into::into),
-            JobDescriptionAction::List { query } => {
-                cli::jd_list(port, query).await.map_err(Into::into)
-            }
-            JobDescriptionAction::Delete { id } => {
-                cli::jd_delete(port, id).await.map_err(Into::into)
-            }
+            JobDescriptionAction::Create => run(cli::jd_create(port)).await,
+            JobDescriptionAction::Get { id } => run(cli::jd_get(port, id)).await,
+            JobDescriptionAction::List { query } => run(cli::jd_list(port, query)).await,
+            JobDescriptionAction::Delete { id } => run(cli::jd_delete(port, id)).await,
         },
         Command::Repository { action } => match action {
-            RepositoryAction::Init => cli::repository_init(port).await.map_err(Into::into),
-            RepositoryAction::Branch { name } => {
-                cli::repository_branch(port, name).await.map_err(Into::into)
+            RepositoryAction::Init => run(cli::repository_init(port)).await,
+            RepositoryAction::Branch { name } => run(cli::repository_branch(port, name)).await,
+            RepositoryAction::Checkout { branch } => {
+                run(cli::repository_checkout(port, branch)).await
             }
-            RepositoryAction::Checkout { branch } => cli::repository_checkout(port, branch)
-                .await
-                .map_err(Into::into),
-            RepositoryAction::Delete { branch } => cli::repository_delete(port, branch)
-                .await
-                .map_err(Into::into),
-            RepositoryAction::Commit { message } => cli::repository_commit(port, message)
-                .await
-                .map_err(Into::into),
-            RepositoryAction::Status => cli::repository_status(port).await.map_err(Into::into),
-            RepositoryAction::Diff => cli::repository_diff(port).await.map_err(Into::into),
-            RepositoryAction::Log => cli::repository_log(port).await.map_err(Into::into),
+            RepositoryAction::Delete { branch } => run(cli::repository_delete(port, branch)).await,
+            RepositoryAction::Commit { message } => {
+                run(cli::repository_commit(port, message)).await
+            }
+            RepositoryAction::Status => run(cli::repository_status(port)).await,
+            RepositoryAction::Diff => run(cli::repository_diff(port)).await,
+            RepositoryAction::Log => run(cli::repository_log(port)).await,
         },
     };
     match result {

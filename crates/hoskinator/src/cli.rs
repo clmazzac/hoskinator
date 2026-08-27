@@ -49,92 +49,57 @@ pub enum CliError {
 }
 
 pub async fn profile_get(port: u16) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .profile_get()
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.profile_get()).await?)
 }
 
 pub async fn profile_set(port: u16) -> Result<(), CliError> {
     let profile = read_profile(std::io::stdin().lock())?;
-    client(port)?
-        .profile_set(profile)
-        .await
-        .map_err(|source| classify(source, port))
+    fetch(port, client(port)?.profile_set(profile)).await
 }
 
 pub async fn repository_init(port: u16) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .repository_init()
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.repository_init()).await?)
 }
 
 pub async fn repository_branch(port: u16, name: String) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .repository_branch_create(CreateBranchRequest { name, from: None })
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    let request = CreateBranchRequest { name, from: None };
+    render(fetch(port, client(port)?.repository_branch_create(request)).await?)
 }
 
 pub async fn repository_checkout(port: u16, branch: String) -> Result<(), CliError> {
     render(
-        client(port)?
-            .repository_checkout(CheckoutRequest { branch })
-            .await
-            .map_err(|source| classify(source, port))?,
+        fetch(
+            port,
+            client(port)?.repository_checkout(CheckoutRequest { branch }),
+        )
+        .await?,
     )
 }
 
 pub async fn repository_delete(port: u16, branch: String) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .repository_branch_delete(branch)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.repository_branch_delete(branch)).await?)
 }
 
 pub async fn repository_commit(port: u16, message: String) -> Result<(), CliError> {
     render(
-        client(port)?
-            .repository_commit(CommitRequest { message })
-            .await
-            .map_err(|source| classify(source, port))?,
+        fetch(
+            port,
+            client(port)?.repository_commit(CommitRequest { message }),
+        )
+        .await?,
     )
 }
 
 pub async fn repository_status(port: u16) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .repository_status()
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.repository_status()).await?)
 }
 
 pub async fn repository_diff(port: u16) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .repository_diff()
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.repository_diff()).await?)
 }
 
 pub async fn repository_log(port: u16) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .repository_log()
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.repository_log()).await?)
 }
 
 fn render(value: impl serde::Serialize) -> Result<(), CliError> {
@@ -147,54 +112,43 @@ fn render(value: impl serde::Serialize) -> Result<(), CliError> {
 
 /// Creates a section and prints the stored record.
 pub async fn section_create(port: u16, name: &str, entry_type: EntryType) -> Result<(), CliError> {
-    let section = client(port)?
-        .section_create(name.to_owned(), entry_type)
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let section = fetch(
+        port,
+        client(port)?.section_create(name.to_owned(), entry_type),
+    )
+    .await?;
     print!("{}", table(&[section]));
     Ok(())
 }
 
 /// Prints every section.
 pub async fn section_list(port: u16) -> Result<(), CliError> {
-    let sections = client(port)?
-        .section_list()
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let sections = fetch(port, client(port)?.section_list()).await?;
     print!("{}", table(&sections));
     Ok(())
 }
 
 /// Renames a section and prints the stored record.
 pub async fn section_rename(port: u16, name: &str, new_name: &str) -> Result<(), CliError> {
-    let section = client(port)?
-        .section_update(name.to_owned(), Some(new_name.to_owned()), None)
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let client = client(port)?;
+    let request = client.section_update(name.to_owned(), Some(new_name.to_owned()), None);
+    let section = fetch(port, request).await?;
     print!("{}", table(&[section]));
     Ok(())
 }
 
 /// Changes a section's entry type and prints the stored record.
 pub async fn section_retype(port: u16, name: &str, entry_type: EntryType) -> Result<(), CliError> {
-    let section = client(port)?
-        .section_update(name.to_owned(), None, Some(entry_type))
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let client = client(port)?;
+    let request = client.section_update(name.to_owned(), None, Some(entry_type));
+    let section = fetch(port, request).await?;
     print!("{}", table(&[section]));
     Ok(())
 }
 
 /// Deletes a section.
 pub async fn section_delete(port: u16, name: &str) -> Result<(), CliError> {
-    client(port)?
-        .section_delete(name.to_owned())
-        .await
-        .map_err(|source| classify(source, port))
+    fetch(port, client(port)?.section_delete(name.to_owned())).await
 }
 
 /// Renders sections as a two-column table, or the empty string when there are none.
@@ -227,63 +181,33 @@ const TYPE_HEADING: &str = "ENTRY TYPE";
 /// Creates an entry of `entry_type` from the fields on standard input and prints it.
 pub async fn entry_create(port: u16, entry_type: EntryType) -> Result<(), CliError> {
     let fields = read_fields(std::io::stdin().lock())?;
-
-    render(
-        client(port)?
-            .entry_create(entry_type, fields)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.entry_create(entry_type, fields)).await?)
 }
 
 /// Prints the entry with `id`, or `null` when it is absent.
 pub async fn entry_get(port: u16, id: i64) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .entry_get(id)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.entry_get(id)).await?)
 }
 
 /// Prints every entry, or only those of one type.
 pub async fn entry_list(port: u16, entry_type: Option<EntryType>) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .entry_list(entry_type)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.entry_list(entry_type)).await?)
 }
 
 /// Prints the entries a section is eligible to hold.
 pub async fn entry_eligible(port: u16, section: &str) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .entry_eligible(section.to_owned())
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.entry_eligible(section.to_owned())).await?)
 }
 
 /// Replaces an entry's fields with those on standard input and prints it.
 pub async fn entry_update(port: u16, id: i64) -> Result<(), CliError> {
     let fields = read_fields(std::io::stdin().lock())?;
-
-    render(
-        client(port)?
-            .entry_update(id, fields)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.entry_update(id, fields)).await?)
 }
 
 /// Deletes an entry.
 pub async fn entry_delete(port: u16, id: i64) -> Result<(), CliError> {
-    client(port)?
-        .entry_delete(id)
-        .await
-        .map_err(|source| classify(source, port))
+    fetch(port, client(port)?.entry_delete(id)).await
 }
 
 fn read_fields(mut input: impl std::io::Read) -> Result<serde_json::Value, CliError> {
@@ -302,50 +226,28 @@ pub async fn bullet_create(
     text: &str,
     note: Option<String>,
 ) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .bullet_create(entry_id, text.to_owned(), note)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    let client = client(port)?;
+    render(fetch(port, client.bullet_create(entry_id, text.to_owned(), note)).await?)
 }
 
 /// Prints one bullet with its variants.
 pub async fn bullet_get(port: u16, id: i64) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .bullet_get(id)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.bullet_get(id)).await?)
 }
 
 /// Prints every bullet of an entry, in order.
 pub async fn bullet_list(port: u16, entry_id: i64) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .bullet_list(entry_id)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.bullet_list(entry_id)).await?)
 }
 
 /// Moves a bullet within its entry and prints the new order.
 pub async fn bullet_move(port: u16, id: i64, position: i32) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .bullet_move(id, position)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.bullet_move(id, position)).await?)
 }
 
 /// Deletes a bullet and its variants.
 pub async fn bullet_delete(port: u16, id: i64) -> Result<(), CliError> {
-    client(port)?
-        .bullet_delete(id)
-        .await
-        .map_err(|source| classify(source, port))
+    fetch(port, client(port)?.bullet_delete(id)).await
 }
 
 /// Adds another wording to a bullet.
@@ -355,11 +257,13 @@ pub async fn variant_create(
     text: &str,
     note: Option<String>,
 ) -> Result<(), CliError> {
+    let client = client(port)?;
     render(
-        client(port)?
-            .variant_create(bullet_id, text.to_owned(), note)
-            .await
-            .map_err(|source| classify(source, port))?,
+        fetch(
+            port,
+            client.variant_create(bullet_id, text.to_owned(), note),
+        )
+        .await?,
     )
 }
 
@@ -370,80 +274,46 @@ pub async fn variant_update(
     text: Option<String>,
     note: Option<String>,
 ) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .variant_update(id, text, note)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.variant_update(id, text, note)).await?)
 }
 
 /// Makes a variant the default wording of its bullet.
 pub async fn variant_set_default(port: u16, id: i64) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .variant_set_default(id)
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.variant_set_default(id)).await?)
 }
 
 /// Deletes a variant.
 pub async fn variant_delete(port: u16, id: i64) -> Result<(), CliError> {
-    client(port)?
-        .variant_delete(id)
-        .await
-        .map_err(|source| classify(source, port))
+    fetch(port, client(port)?.variant_delete(id)).await
 }
 
 /// Prints what a query matches, best first.
 pub async fn search(port: u16, query: &str) -> Result<(), CliError> {
-    render(
-        client(port)?
-            .search_query(query.to_owned())
-            .await
-            .map_err(|source| classify(source, port))?,
-    )
+    render(fetch(port, client(port)?.search_query(query.to_owned())).await?)
 }
 
 /// Creates a Job Description from JSON on standard input and prints its record.
 pub async fn jd_create(port: u16) -> Result<(), CliError> {
     let job_description = read_job_description(std::io::stdin().lock())?;
-    let created = client(port)?
-        .jd_create(job_description)
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let created = fetch(port, client(port)?.jd_create(job_description)).await?;
     print_job_description(&created)
 }
 
 /// Prints the Job Description with `id`, or `null` when it is absent.
 pub async fn jd_get(port: u16, id: i64) -> Result<(), CliError> {
-    let job_description = client(port)?
-        .jd_get(id)
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let job_description = fetch(port, client(port)?.jd_get(id)).await?;
     print_job_description(&job_description)
 }
 
 /// Prints every Job Description matching an optional full-text query.
 pub async fn jd_list(port: u16, query: Option<String>) -> Result<(), CliError> {
-    let job_descriptions = client(port)?
-        .jd_list(query)
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let job_descriptions = fetch(port, client(port)?.jd_list(query)).await?;
     print_job_description(&job_descriptions)
 }
 
 /// Deletes the Job Description with `id` and prints whether it existed.
 pub async fn jd_delete(port: u16, id: i64) -> Result<(), CliError> {
-    let deleted = client(port)?
-        .jd_delete(id)
-        .await
-        .map_err(|source| classify(source, port))?;
-
+    let deleted = fetch(port, client(port)?.jd_delete(id)).await?;
     print_job_description(&deleted)
 }
 
@@ -475,6 +345,14 @@ fn client(port: u16) -> Result<HttpClient, CliError> {
     HttpClientBuilder::default()
         .build(format!("http://127.0.0.1:{port}/rpc"))
         .map_err(|source| CliError::NoDaemon { port, source })
+}
+
+/// Awaits a client call, classifying a transport failure as a missing daemon.
+async fn fetch<T>(
+    port: u16,
+    method: impl std::future::Future<Output = Result<T, ClientError>>,
+) -> Result<T, CliError> {
+    method.await.map_err(|source| classify(source, port))
 }
 
 fn classify(error: ClientError, port: u16) -> CliError {

@@ -452,60 +452,33 @@ impl ProfileApi {
     }
 }
 
-/// Serves the Section methods from one store.
-pub struct SectionApi {
-    store: Arc<Store>,
+/// Declares a `pub struct $name` holding one store, with a matching `new`.
+macro_rules! store_api {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        pub struct $name {
+            store: Arc<Store>,
+        }
+
+        impl $name {
+            pub fn new(store: Arc<Store>) -> Self {
+                Self { store }
+            }
+        }
+    };
 }
 
-impl SectionApi {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
-    }
-}
-
-/// Serves the Entry methods from one store.
-pub struct EntryApi {
-    store: Arc<Store>,
-}
-
-impl EntryApi {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
-    }
-}
-
-/// Serves the Bullet and Variant methods from one store.
-pub struct BulletApi {
-    store: Arc<Store>,
-}
-
-impl BulletApi {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
-    }
-}
-
-/// Serves search from one store.
-pub struct SearchApi {
-    store: Arc<Store>,
-}
-
-impl SearchApi {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
-    }
-}
-
-/// Serves the Job Description methods from one store.
-pub struct JobDescriptionApi {
-    store: Arc<Store>,
-}
-
-impl JobDescriptionApi {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
-    }
-}
+store_api!(SectionApi, "Serves the Section methods from one store.");
+store_api!(EntryApi, "Serves the Entry methods from one store.");
+store_api!(
+    BulletApi,
+    "Serves the Bullet and Variant methods from one store."
+);
+store_api!(SearchApi, "Serves search from one store.");
+store_api!(
+    JobDescriptionApi,
+    "Serves the Job Description methods from one store."
+);
 
 #[async_trait]
 impl SectionRpcServer for SectionApi {
@@ -677,7 +650,9 @@ impl ResumeApi {
     }
 
     fn repository_path(&self) -> RpcResult<PathBuf> {
-        self.repository_path.get().ok_or_else(resume_unavailable)
+        self.repository_path
+            .get()
+            .ok_or_else(|| unavailable(RESUME_UNAVAILABLE))
     }
 
     async fn operation<T, F>(&self, operation: F) -> RpcResult<T>
@@ -870,7 +845,10 @@ impl RenderRpcServer for RenderApi {
     }
 
     async fn render_run(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedPdf> {
-        let repository = self.repository_path.get().ok_or_else(render_unavailable)?;
+        let repository = self
+            .repository_path
+            .get()
+            .ok_or_else(|| unavailable(RENDER_UNAVAILABLE))?;
 
         blocking(move || render::pdf(&repository, &directory, &file_name))
             .await?
@@ -890,7 +868,10 @@ impl RenderRpcServer for RenderApi {
     }
 
     async fn render_docx(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedDocx> {
-        let repository = self.repository_path.get().ok_or_else(render_unavailable)?;
+        let repository = self
+            .repository_path
+            .get()
+            .ok_or_else(|| unavailable(RENDER_UNAVAILABLE))?;
 
         blocking(move || render::docx(&repository, &directory, &file_name))
             .await?
@@ -1154,24 +1135,9 @@ fn render_code_for(error: &RenderError) -> i32 {
     }
 }
 
-fn render_unavailable() -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(
-        RENDER_UNAVAILABLE,
-        "no resume repository is configured",
-        None::<()>,
-    )
-}
-
-fn render_rpc_error(error: RenderError) -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(render_code_for(&error), source_message(&error), None::<()>)
-}
-
-fn resume_unavailable() -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(
-        RESUME_UNAVAILABLE,
-        "no resume repository is configured",
-        None::<()>,
-    )
+/// No resume repository is configured, whichever RPC needed one.
+fn unavailable(code: i32) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(code, "no resume repository is configured", None::<()>)
 }
 
 fn applications_unavailable() -> ErrorObjectOwned {
@@ -1202,10 +1168,6 @@ fn section_type_mismatch(section: &str, expected: EntryType, got: EntryType) -> 
     )
 }
 
-fn resume_rpc_error(error: ResumeError) -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(resume_code_for(&error), source_message(&error), None::<()>)
-}
-
 fn source_message(error: &dyn std::error::Error) -> String {
     let mut message = error.to_string();
     let mut source = error.source();
@@ -1217,17 +1179,27 @@ fn source_message(error: &dyn std::error::Error) -> String {
     message
 }
 
+/// Renders an error as a JSON-RPC error, with `code_for` choosing the code and its causes
+/// making up the message.
+fn rpc_error<E: std::error::Error>(code_for: fn(&E) -> i32, error: E) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(code_for(&error), source_message(&error), None::<()>)
+}
+
 /// Renders a [`StoreError`] as a JSON-RPC error, with its causes in the message.
 fn store_rpc_error(error: StoreError) -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(store_code_for(&error), source_message(&error), None::<()>)
+    rpc_error(store_code_for, error)
 }
 
 fn repository_rpc_error(error: RepositoryError) -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(
-        repository_code_for(&error),
-        source_message(&error),
-        None::<()>,
-    )
+    rpc_error(repository_code_for, error)
+}
+
+fn resume_rpc_error(error: ResumeError) -> ErrorObjectOwned {
+    rpc_error(resume_code_for, error)
+}
+
+fn render_rpc_error(error: RenderError) -> ErrorObjectOwned {
+    rpc_error(render_code_for, error)
 }
 
 /// Serves the application tracker from one store.
@@ -1401,7 +1373,10 @@ impl WorkspaceRpcServer for WorkspaceApi {
     }
 
     async fn workspace_push(&self, branch: String) -> RpcResult<()> {
-        let path = self.repository_path.get().ok_or_else(resume_unavailable)?;
+        let path = self
+            .repository_path
+            .get()
+            .ok_or_else(|| unavailable(RESUME_UNAVAILABLE))?;
         workspace_blocking(move || workspace::push(&path, &branch)).await
     }
 

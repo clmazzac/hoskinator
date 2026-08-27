@@ -226,6 +226,15 @@ mod tests {
         )
     }
 
+    /// A repository-backed router whose worktree already holds `resume.yaml`.
+    async fn resume_router(yaml: &str) -> (TempDir, Router, PathBuf) {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("resume.yaml"), yaml).unwrap();
+        (dir, router, repo)
+    }
+
     async fn call(router: Router, request: &str) -> serde_json::Value {
         let response = router
             .oneshot(
@@ -318,10 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn setting_the_profile_refreshes_the_current_branch_s_resume_yaml() {
-        let (dir, router) = repository_router().await;
-        let repo = dir.path().join("resume");
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Old Name\n").unwrap();
+        let (_dir, router, repo) = resume_router("cv:\n  name: Old Name\n").await;
 
         let profile = Profile {
             name: Some("Ada Lovelace".into()),
@@ -974,10 +980,7 @@ mod tests {
 
     #[tokio::test]
     async fn resume_methods_are_available_over_json_rpc() {
-        let (dir, router) = repository_router().await;
-        let repo_path = dir.path().join("resume");
-        std::fs::create_dir_all(&repo_path).unwrap();
-        std::fs::write(repo_path.join("resume.yaml"), "cv:\n  name: Old Name\n").unwrap();
+        let (_dir, router, _repo) = resume_router("cv:\n  name: Old Name\n").await;
 
         let unavailable = call(
             test_router().await.1,
@@ -1061,10 +1064,7 @@ mod tests {
 
     #[tokio::test]
     async fn placing_an_entry_of_the_wrong_type_for_its_section_is_rejected() {
-        let (dir, router) = repository_router().await;
-        let repo = dir.path().join("resume");
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+        let (_dir, router, repo) = resume_router("cv:\n  name: Ada\n").await;
 
         call(
             router.clone(),
@@ -1101,10 +1101,7 @@ mod tests {
 
     #[tokio::test]
     async fn placing_an_entry_into_a_section_that_does_not_exist_is_reported() {
-        let (dir, router) = repository_router().await;
-        let repo = dir.path().join("resume");
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\n").unwrap();
+        let (_dir, router, _repo) = resume_router("cv:\n  name: Ada\n").await;
 
         let missing = call(
             router,
