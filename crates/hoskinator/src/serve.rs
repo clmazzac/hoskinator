@@ -79,9 +79,9 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
         listener,
         router(store, config.resume_repo, default_repository_root)?,
     )
-        .with_graceful_shutdown(interrupted())
-        .await
-        .map_err(ServeError::Serve)
+    .with_graceful_shutdown(interrupted())
+    .await
+    .map_err(ServeError::Serve)
 }
 
 /// The daemon's routes, with every request passing the authenticator.
