@@ -40,61 +40,51 @@ export default function SheetImport({
     );
   }, [open]);
 
-  const link = () => {
-    setLinking(true);
+  const attempt = <T,>(
+    setPending: (pending: boolean) => void,
+    work: Promise<T>,
+    onSuccess: (result: T) => void,
+    onFailure?: () => void,
+  ) => {
+    setPending(true);
     setError(null);
-    linkSheet(linkInput).then(
-      (status) => {
-        setLinking(false);
-        setLinkInput("");
-        setLinked(status.applications_sheet);
+    work.then(
+      (result) => {
+        setPending(false);
+        onSuccess(result);
       },
       (failure: Error) => {
-        setLinking(false);
+        setPending(false);
         setError(failure.message);
+        onFailure?.();
       },
     );
   };
 
-  const sync = () => {
-    setSyncing(true);
-    setError(null);
-    sheetCsv().then(
-      (text) => {
-        setSyncing(false);
-        setPasted(text);
-      },
-      (failure: Error) => {
-        setSyncing(false);
-        setError(failure.message);
-      },
-    );
-  };
+  const link = () =>
+    attempt(setLinking, linkSheet(linkInput), (status) => {
+      setLinkInput("");
+      setLinked(status.applications_sheet);
+    });
+
+  const sync = () => attempt(setSyncing, sheetCsv(), setPasted);
 
   const rows = pasted.trim() === "" ? [] : parseSheet(pasted);
 
-  const bring = () => {
-    setBusy(true);
-    setError(null);
-    rows
-      .reduce(
+  const bring = () =>
+    attempt(
+      setBusy,
+      rows.reduce(
         (queue, row) => queue.then(() => createApplication(row).then(() => undefined)),
         Promise.resolve(),
-      )
-      .then(
-        () => {
-          setBusy(false);
-          setPasted("");
-          onOpenChange(false);
-          onImported();
-        },
-        (failure: Error) => {
-          setBusy(false);
-          setError(failure.message);
-          onImported();
-        },
-      );
-  };
+      ),
+      () => {
+        setPasted("");
+        onOpenChange(false);
+        onImported();
+      },
+      onImported,
+    );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
