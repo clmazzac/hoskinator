@@ -123,7 +123,7 @@ fn render(
     if !input.is_file() {
         return Err(RenderError::ResumeNotFound { path: input });
     }
-    let path = repository.join(directory).join(named_pdf(file_name));
+    let path = repository.join(directory).join(named(file_name, EXTENSION));
 
     // rendercv cannot make a PDF without also writing Typst, so the intermediate is sent
     // somewhere other than the directory the caller asked for.
@@ -168,7 +168,9 @@ fn render_docx(
     if !input.is_file() {
         return Err(RenderError::ResumeNotFound { path: input });
     }
-    let path = repository.join(directory).join(named_docx(file_name));
+    let path = repository
+        .join(directory)
+        .join(named(file_name, DOCX_EXTENSION));
 
     let scratch = tempfile::TempDir::new().map_err(RenderError::Scratch)?;
     let markdown = scratch.path().join("resume.md");
@@ -227,21 +229,12 @@ fn render_docx(
     Ok(RenderedDocx { path })
 }
 
-/// `file_name` with the PDF extension, added only if it is not already there.
-fn named_pdf(file_name: &str) -> String {
-    if file_name.to_ascii_lowercase().ends_with(EXTENSION) {
+/// `file_name` with `extension` appended, unless it is already there.
+fn named(file_name: &str, extension: &str) -> String {
+    if file_name.to_ascii_lowercase().ends_with(extension) {
         file_name.to_owned()
     } else {
-        format!("{file_name}{EXTENSION}")
-    }
-}
-
-/// `file_name` with the DOCX extension, added only if it is not already there.
-fn named_docx(file_name: &str) -> String {
-    if file_name.to_ascii_lowercase().ends_with(DOCX_EXTENSION) {
-        file_name.to_owned()
-    } else {
-        format!("{file_name}{DOCX_EXTENSION}")
+        format!("{file_name}{extension}")
     }
 }
 
@@ -333,18 +326,18 @@ mod tests {
 
     #[test]
     fn the_extension_is_added_once() {
-        assert_eq!(named_pdf("Resume"), "Resume.pdf");
-        assert_eq!(named_pdf("Resume.pdf"), "Resume.pdf");
-        assert_eq!(named_pdf("Resume.PDF"), "Resume.PDF");
-        assert_eq!(named_pdf("Ada.Lovelace"), "Ada.Lovelace.pdf");
+        assert_eq!(named("Resume", EXTENSION), "Resume.pdf");
+        assert_eq!(named("Resume.pdf", EXTENSION), "Resume.pdf");
+        assert_eq!(named("Resume.PDF", EXTENSION), "Resume.PDF");
+        assert_eq!(named("Ada.Lovelace", EXTENSION), "Ada.Lovelace.pdf");
     }
 
     #[test]
     fn the_docx_extension_is_added_once() {
-        assert_eq!(named_docx("Resume"), "Resume.docx");
-        assert_eq!(named_docx("Resume.docx"), "Resume.docx");
-        assert_eq!(named_docx("Resume.DOCX"), "Resume.DOCX");
-        assert_eq!(named_docx("Ada.Lovelace"), "Ada.Lovelace.docx");
+        assert_eq!(named("Resume", DOCX_EXTENSION), "Resume.docx");
+        assert_eq!(named("Resume.docx", DOCX_EXTENSION), "Resume.docx");
+        assert_eq!(named("Resume.DOCX", DOCX_EXTENSION), "Resume.DOCX");
+        assert_eq!(named("Ada.Lovelace", DOCX_EXTENSION), "Ada.Lovelace.docx");
     }
 
     #[test]
