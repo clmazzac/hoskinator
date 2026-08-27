@@ -268,11 +268,22 @@ export interface Suggestion {
   why: string;
 }
 
-/** The AI-judged half of the tailoring panel: relevance, tone, flow, and rewrite suggestions. */
+/** Whether one of jd.match's missing keywords is covered by the resume some other way. */
+export interface SemanticMatch {
+  keyword: string;
+  covered: boolean;
+  evidence: string | null;
+}
+
+/**
+ * The AI-judged half of the tailoring panel: relevance, tone, flow, semantic keyword coverage,
+ * and rewrite suggestions.
+ */
 export interface Assessment {
   relevance: Score;
   tone: Score;
   flow: Score;
+  semantic_coverage: SemanticMatch[];
   suggestions: Suggestion[];
 }
 

@@ -83,3 +83,27 @@ one, each with its own saved layout size. Collapse follows the render panel's ex
 Within the panel, Match and Assessment are independent `Collapsible` sections rather than one
 collapse toggle for the whole panel — "hide the thing I don't need right now" reads as a per-section
 action (hide Assessment while unkeyed, keep Match), not an all-or-nothing one.
+
+## Semantic matching lives in `ai.assess`, not `jd.match`, and only Anthropic
+
+`ai.assess` now also takes `jd.match`'s missing keywords and asks the model which ones the resume
+actually covers in different words, with the covering line as evidence. `jd.match`'s score itself is
+untouched — still pure keyword overlap.
+
+**Why not in `jd.match`:** that score exists to be reproducible; the same resume against the same JD
+must always return the same number, which is the property an LLM call can't guarantee. HackerRank's
+`hiring-agent` (see above) is the cautionary example — a single LLM call standing in for an objective
+score, scoring the same input 66 to 99 across runs. Putting semantic judgment in `ai.assess` instead
+keeps it where non-determinism is already expected and accepted, without touching the guarantee the
+match score exists for.
+
+**Why Anthropic over a second provider (e.g. OpenRouter):** ADR-0005 commits `ai` to one provider.
+The `Transport` trait is provider-agnostic by construction, so nothing technical stops a second
+backend, but "a tiny model" doesn't require one — `claude-haiku-4-5-20251001` (already
+`DEFAULT_ASSESS_MODEL`) is that tier. Adding a second HTTP client and a second API key for a
+capability the existing one already covers isn't worth the deviation from the ADR.
+
+**Why re-check only the missing keywords, not the whole JD:** it's the smallest prompt that answers
+the actual question ("is 'missing' really missing?"), reuses `jd.match`'s work instead of
+re-deriving requirements from the JD text, and keeps the false-negative case — a keyword the
+deterministic pass wrongly flagged as absent — as the one thing this call has to get right.
