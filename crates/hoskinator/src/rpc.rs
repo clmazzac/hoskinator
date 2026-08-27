@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 #[cfg(feature = "ai")]
-use hoskinator_ai::Assessment;
+use hoskinator_ai::{Assessment, DraftBullet};
 use hoskinator_core::application::{Application, NewApplication, STATUSES};
 use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
@@ -106,6 +106,9 @@ pub const AI_UNCONFIGURED: i32 = -32036;
 /// A call to Claude failed.
 #[cfg(feature = "ai")]
 pub const AI_FAILED: i32 = -32037;
+/// The `ai` feature is compiled in, but the entry has no braindump to draft bullets from.
+#[cfg(feature = "ai")]
+pub const BRAINDUMP_EMPTY: i32 = -32038;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -242,6 +245,10 @@ pub trait JobDescriptionRpc {
 pub trait AiRpc {
     #[method(name = "ai.assess")]
     async fn ai_assess(&self, jd_id: i64) -> RpcResult<Assessment>;
+
+    /// Drafts bullets from an entry's braindump, skipping wordings it already has.
+    #[method(name = "ai.suggest_bullets")]
+    async fn ai_suggest_bullets(&self, entry_id: i64) -> RpcResult<Vec<DraftBullet>>;
 }
 
 #[rpc(server, client)]
@@ -1167,6 +1174,42 @@ impl AiRpcServer for AiApi {
         .await
         .map_err(ai_rpc_error)
     }
+
+    async fn ai_suggest_bullets(&self, entry_id: i64) -> RpcResult<Vec<DraftBullet>> {
+        let entry = self
+            .store
+            .entry(entry_id)
+            .await
+            .map_err(store_rpc_error)?
+            .ok_or_else(|| {
+                store_rpc_error(StoreError::Entry(EntryError::NoSuchEntry { id: entry_id }))
+            })?;
+        let braindump = entry
+            .braindump
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(braindump_empty)?;
+
+        let existing = self
+            .store
+            .bullets(entry_id)
+            .await
+            .map_err(store_rpc_error)?
+            .into_iter()
+            .filter_map(|bullet| {
+                bullet
+                    .variants
+                    .into_iter()
+                    .find(|variant| variant.is_default)
+            })
+            .map(|variant| variant.text)
+            .collect::<Vec<_>>();
+
+        let config = hoskinator_ai::Config::from_env().ok_or_else(ai_unconfigured)?;
+        let transport = hoskinator_ai::AnthropicTransport::new(config.api_key);
+        hoskinator_ai::suggest_bullets(&transport, &config.suggest_model, &braindump, &existing)
+            .await
+            .map_err(suggest_rpc_error)
+    }
 }
 
 /// Maps a [`StoreError`] onto the code its variant belongs to.
@@ -1293,6 +1336,20 @@ fn ai_unconfigured() -> ErrorObjectOwned {
 
 #[cfg(feature = "ai")]
 fn ai_rpc_error(error: hoskinator_ai::AssessError) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(AI_FAILED, source_message(&error), None::<()>)
+}
+
+#[cfg(feature = "ai")]
+fn braindump_empty() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        BRAINDUMP_EMPTY,
+        "this entry has no braindump yet",
+        None::<()>,
+    )
+}
+
+#[cfg(feature = "ai")]
+fn suggest_rpc_error(error: hoskinator_ai::SuggestError) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(AI_FAILED, source_message(&error), None::<()>)
 }
 

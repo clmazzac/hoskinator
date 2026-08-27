@@ -588,6 +588,67 @@ mod tests {
         assert_eq!(answer["error"]["code"], crate::rpc::AI_UNCONFIGURED);
     }
 
+    #[cfg(feature = "ai")]
+    #[tokio::test]
+    async fn ai_suggest_bullets_on_an_absent_entry_answers_entry_not_found() {
+        let (_dir, router) = test_router().await;
+
+        let answer = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"ai.suggest_bullets","params":[404]}"#,
+        )
+        .await;
+        assert_eq!(answer["error"]["code"], crate::rpc::ENTRY_NOT_FOUND);
+    }
+
+    #[cfg(feature = "ai")]
+    #[tokio::test]
+    async fn ai_suggest_bullets_without_a_braindump_answers_braindump_empty() {
+        let (_dir, router) = test_router().await;
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.create","params":["experience",
+               {"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+        let id = created["result"]["id"].as_i64().unwrap();
+
+        let answer = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"ai.suggest_bullets","params":[{id}]}}"#),
+        )
+        .await;
+        assert_eq!(answer["error"]["code"], crate::rpc::BRAINDUMP_EMPTY);
+    }
+
+    // Relies on the test process having no ANTHROPIC_API_KEY, same as CI (see .github/workflows).
+    #[cfg(feature = "ai")]
+    #[tokio::test]
+    async fn ai_suggest_bullets_without_a_configured_key_answers_ai_unconfigured() {
+        let (_dir, router) = test_router().await;
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.create","params":["experience",
+               {"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+        let id = created["result"]["id"].as_i64().unwrap();
+        call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"entry.set_braindump","params":[{id},"Migrated the billing pipeline to a queue."]}}"#
+            ),
+        )
+        .await;
+
+        let answer = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":3,"method":"ai.suggest_bullets","params":[{id}]}}"#),
+        )
+        .await;
+        assert_eq!(answer["error"]["code"], crate::rpc::AI_UNCONFIGURED);
+    }
+
     #[tokio::test]
     async fn entry_crud_works_over_http() {
         let (_dir, router) = test_router().await;

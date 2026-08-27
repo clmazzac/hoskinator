@@ -23,6 +23,21 @@ pub trait Transport: Send + Sync {
     async fn complete(&self, model: &str, prompt: &str) -> Result<String, TransportError>;
 }
 
+/// Strips a ```json ... ``` or ``` ... ``` fence if the model wrapped its JSON reply in one.
+pub(crate) fn strip_code_fence(reply: &str) -> &str {
+    let trimmed = reply.trim();
+    let Some(without_open) = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+    else {
+        return trimmed;
+    };
+    without_open
+        .strip_suffix("```")
+        .unwrap_or(without_open)
+        .trim()
+}
+
 /// Calls the real Anthropic Messages API.
 pub struct AnthropicTransport {
     api_key: String,

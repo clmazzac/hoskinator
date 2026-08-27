@@ -6,8 +6,10 @@
 
 pub mod assess;
 pub mod config;
+pub mod suggest;
 pub mod transport;
 
 pub use assess::{AssessError, Assessment, Score, Suggestion, assess};
 pub use config::Config;
+pub use suggest::{DraftBullet, SuggestError, suggest_bullets};
 pub use transport::{AnthropicTransport, Transport, TransportError};
