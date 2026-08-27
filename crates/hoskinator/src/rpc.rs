@@ -22,6 +22,7 @@ use hoskinator_core::search::SearchHit;
 use hoskinator_core::section::{EntryType, Section, SectionError};
 use hoskinator_core::sheets::{self, SheetError};
 use hoskinator_core::store::{Store, StoreError};
+use hoskinator_core::tailoring::{self, MatchReport};
 use hoskinator_core::workspace::{self, WorkspaceError, WorkspaceStatus};
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
@@ -95,6 +96,8 @@ pub const WORKSPACE_SHEET: i32 = -32032;
 pub const RESUME_SECTION_TYPE_MISMATCH: i32 = -32033;
 /// No resume repository is configured, or it has no GitHub remote to scope applications by.
 pub const APPLICATION_UNAVAILABLE: i32 = -32034;
+/// The request named a Job Description that is not there.
+pub const JD_NOT_FOUND: i32 = -32035;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -214,6 +217,9 @@ pub trait JobDescriptionRpc {
 
     #[method(name = "jd.delete")]
     async fn jd_delete(&self, id: i64) -> RpcResult<bool>;
+
+    #[method(name = "jd.match")]
+    async fn jd_match(&self, id: i64) -> RpcResult<MatchReport>;
 }
 
 #[rpc(server, client)]
@@ -475,10 +481,22 @@ store_api!(
     "Serves the Bullet and Variant methods from one store."
 );
 store_api!(SearchApi, "Serves search from one store.");
-store_api!(
-    JobDescriptionApi,
-    "Serves the Job Description methods from one store."
-);
+
+/// Serves the Job Description methods from one store, scoring against the active repository's
+/// resume.
+pub struct JobDescriptionApi {
+    store: Arc<Store>,
+    repository_path: ActiveRepository,
+}
+
+impl JobDescriptionApi {
+    pub fn new(store: Arc<Store>, repository_path: ActiveRepository) -> Self {
+        Self {
+            store,
+            repository_path,
+        }
+    }
+}
 
 #[async_trait]
 impl SectionRpcServer for SectionApi {
@@ -1041,6 +1059,25 @@ impl JobDescriptionRpcServer for JobDescriptionApi {
             .await
             .map_err(store_rpc_error)
     }
+
+    async fn jd_match(&self, id: i64) -> RpcResult<MatchReport> {
+        let jd = self
+            .store
+            .job_description(id)
+            .await
+            .map_err(store_rpc_error)?
+            .ok_or_else(|| jd_not_found(id))?;
+        let path = self
+            .repository_path
+            .get()
+            .ok_or_else(|| unavailable(RESUME_UNAVAILABLE))?;
+        tokio::task::spawn_blocking(move || {
+            resume::read(&path).map(|yaml| tailoring::match_report(&yaml, &jd.text))
+        })
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(RESUME_IO, error.to_string(), None::<()>))?
+        .map_err(resume_rpc_error)
+    }
 }
 
 /// Maps a [`StoreError`] onto the code its variant belongs to.
@@ -1144,6 +1181,14 @@ fn applications_unavailable() -> ErrorObjectOwned {
     ErrorObjectOwned::owned(
         APPLICATION_UNAVAILABLE,
         "no resume repository is configured, or it has no GitHub remote yet",
+        None::<()>,
+    )
+}
+
+fn jd_not_found(id: i64) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        JD_NOT_FOUND,
+        format!("no job description #{id}"),
         None::<()>,
     )
 }

@@ -21,4 +21,5 @@ pub mod search;
 pub mod section;
 pub mod sheets;
 pub mod store;
+pub mod tailoring;
 pub mod workspace;

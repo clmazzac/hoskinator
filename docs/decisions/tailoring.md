@@ -1,0 +1,58 @@
+# Tailoring decisions
+
+Decisions behind scoring a resume against a job description, newest last. Repo-wide decisions live
+in `CLAUDE.md`; architectural ones in `docs/adr/`.
+
+## Deterministic match and AI assessment are separate engines, not one LLM call
+
+`core::tailoring::match_report` scores a resume against a JD by weighted keyword overlap — pure
+Rust, no LLM, no API key, no embeddings (out of scope for v1 per the PRD). Style/tone/relevance
+judgment is a separate, later `ai`-crate call.
+
+**Why:** HackerRank open-sourced `hiring-agent` in June 2026 — a single LLM call scoring a resume
+0-120. Independent testing ran the same resume through it 100 times and got scores from 66 to 99;
+subjective categories swung wildly while checklist-style ones held steady. A number framed as
+objective (an ATS match) needs to be reproducible, which rules out a single LLM judgment call for
+that part. Splitting the two lets each be honest about what it is: the match score is deterministic
+and re-runs identically; the assessment is a model's judgment and is allowed to read as one.
+
+This also matches how real ATS platforms work: `sunnypatell/ats-screener`'s research into six
+enterprise platforms found most still filter on literal or stemmed keyword matching (Taleo, Lever),
+not semantic ML — `srbhr/Resume-Matcher`, the most established open-source JD-matcher, likewise
+keeps keyword extraction and its match score separate from its LLM-driven rewrite suggestions.
+
+## The keyword matcher operates on the assembled `resume.yaml`, not the Master Store
+
+`jd.match` reads the current branch's `resume.yaml` text (via `resume::read`) and matches it against
+a stored JD's text. It does not read Bullets/Entries from the store directly.
+
+**Why:** the match should answer "would this specific resume, as it will be sent, clear this JD's
+keywords" — that's the assembled YAML, not the full store of material the user hasn't placed yet.
+
+## No stemming/NLP dependency; a hand-rolled suffix strip instead
+
+`stem()` strips a handful of common suffixes (`ing`, `ed`, `es`, `s`) rather than using a real
+stemmer crate (Porter, Snowball) or an NLP toolkit.
+
+**Why:** the tools this design leans on (Resume-Matcher, ats-screener) reach for `textacy`/spaCy or
+TF-IDF because they start from unstructured, OCR'd-from-PDF text. We start from structured YAML we
+wrote ourselves, so the parsing problem they solve doesn't exist here — a lightweight suffix strip
+is enough to catch "managing" against "managed" without a new dependency.
+
+## Sections/formatting are not scored
+
+ats-screener's five dimensions include Formatting and Sections (parseability, section presence) —
+real ATS concerns for a resume a human formatted freely and an ATS then has to parse from a PDF.
+Hoskinator's resumes are rendercv YAML validated against rendercv's schema before they're ever
+written, so a resume that exists at all already has valid structure and required sections. Scoring
+that dimension here would be scoring something that's already guaranteed elsewhere.
+
+## The panels are always visible, not feature-detected away
+
+ADR-0005 says the Web UI hides AI affordances when the addon is absent/unkeyed. The tailoring panel
+is a deliberate exception: both the deterministic Match panel and the AI Assessment panel are always
+present in the resume editor, independently collapsible by the user. When the `ai` feature isn't
+built or isn't keyed, the Assessment panel says so in place rather than disappearing — so the
+product visibly gestures at what AI adds, rather than hiding it until someone stumbles onto a key.
+The one-way `ai` → `core` dependency and the cargo feature flag (ADR-0005) are unchanged; only the
+UI's *hide-when-absent* convention is overridden for this feature.

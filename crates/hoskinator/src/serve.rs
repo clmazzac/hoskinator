@@ -100,7 +100,7 @@ fn router(
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
-    module.merge(JobDescriptionApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(JobDescriptionApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(ResumeApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(RenderApi::new(active.clone()).into_rpc())?;
     module.merge(ApplicationApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
@@ -522,6 +522,43 @@ mod tests {
         )
         .await;
         assert!(missing["result"].is_null());
+    }
+
+    #[tokio::test]
+    async fn jd_match_scores_the_active_branch_s_resume_against_a_stored_jd() {
+        let (dir, router) = repository_router().await;
+        let repo = dir.path().join("resume");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("resume.yaml"), "cv:\n  name: Ada\nsections:\n  experience:\n    - highlights:\n        - Built services in Rust\n").unwrap();
+
+        let jd = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"jd.create","params":[{"title":null,"text":"Looking for a Kubernetes engineer"}]}"#,
+        )
+        .await;
+        let id = jd["result"]["id"].as_i64().unwrap();
+
+        let matched = call(
+            router,
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"jd.match","params":[{id}]}}"#),
+        )
+        .await;
+        assert!(matched.get("error").is_none(), "match failed: {matched}");
+        assert_eq!(matched["result"]["score"], 0);
+        assert_eq!(matched["result"]["missing"][0]["term"], "kubernetes");
+    }
+
+    #[tokio::test]
+    async fn jd_match_against_an_absent_jd_answers_jd_not_found() {
+        let (dir, router) = repository_router().await;
+        std::fs::create_dir_all(dir.path().join("resume")).unwrap();
+
+        let answer = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":1,"method":"jd.match","params":[404]}"#,
+        )
+        .await;
+        assert_eq!(answer["error"]["code"], crate::rpc::JD_NOT_FOUND);
     }
 
     #[tokio::test]
