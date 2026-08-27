@@ -296,8 +296,21 @@ export interface Assessment {
 /** Mirrors `rpc::AI_UNCONFIGURED` — the `ai` feature is built but no API key is set. */
 export const AI_UNCONFIGURED_CODE = -32036;
 
+/** Mirrors `rpc::BRAINDUMP_EMPTY` — the entry has no braindump to draft bullets from. */
+export const BRAINDUMP_EMPTY_CODE = -32038;
+
 export function assessResume(jdId: number): Promise<Assessment> {
   return call("ai.assess", [jdId]);
+}
+
+/** A candidate bullet, with the phrase in the braindump it is grounded in. */
+export interface DraftBullet {
+  text: string;
+  why: string;
+}
+
+export function suggestBullets(entryId: number): Promise<DraftBullet[]> {
+  return call("ai.suggest_bullets", [entryId]);
 }
 
 export interface Head { branch: string | null; commit_id: string | null }

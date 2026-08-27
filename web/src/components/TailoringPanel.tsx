@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { type Async } from "@/lib/async";
 import {
   AI_UNCONFIGURED_CODE,
   RpcFailure,
@@ -26,12 +27,6 @@ import {
   type Keyword,
   type MatchReport,
 } from "@/rpc";
-
-// The state of one round trip: not yet started is `null`, held by whoever owns this value.
-type Async<T> =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ok"; data: T };
 
 function Chip({ children, muted = false }: { children: React.ReactNode; muted?: boolean }) {
   return (

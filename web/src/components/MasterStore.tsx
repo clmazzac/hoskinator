@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, GripVertical } from "lucide-react";
+import { ChevronRight, GripVertical, Sparkles } from "lucide-react";
 
 import EditableText from "@/components/EditableText";
 import ProfileNode from "@/components/ProfileNode";
+import { Button } from "@/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
@@ -15,6 +16,7 @@ import {
   entryLabel,
   isListField,
 } from "@/entryFields";
+import { type Async } from "@/lib/async";
 import {
   joinElements,
   splitElements,
@@ -25,13 +27,19 @@ import {
 import { step, useReloadOnHistory } from "@/lib/history";
 import { cn } from "@/lib/utils";
 import {
+  AI_UNCONFIGURED_CODE,
+  BRAINDUMP_EMPTY_CODE,
+  RpcFailure,
+  createBullet,
   eligibleEntries,
   listBullets,
   listSections,
   setBraindump,
+  suggestBullets,
   updateEntry,
   updateVariant,
   type Bullet,
+  type DraftBullet,
   type Entry,
   type Section,
 } from "@/rpc";
@@ -290,6 +298,91 @@ function BraindumpEditor({ entry, onEdited }: { entry: Entry; onEdited: () => vo
   );
 }
 
+function suggestErrorMessage(error: unknown): string {
+  if (error instanceof RpcFailure && error.code === AI_UNCONFIGURED_CODE) {
+    return "AI isn't configured — set ANTHROPIC_API_KEY to enable this.";
+  }
+  if (error instanceof RpcFailure && error.code === BRAINDUMP_EMPTY_CODE) {
+    return "Write some notes above first.";
+  }
+  return error instanceof Error ? error.message : "could not draft bullets";
+}
+
+function DraftBulletRow({ draft, onAdd }: { draft: DraftBullet; onAdd: () => void }) {
+  const [added, setAdded] = useState(false);
+
+  return (
+    <div className="flex items-start gap-2 py-1">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs leading-snug">{draft.text}</p>
+        <p className="truncate text-[10px] text-muted-foreground italic">{draft.why}</p>
+      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={added}
+        onClick={() => {
+          setAdded(true);
+          onAdd();
+        }}
+        className="h-6 shrink-0 px-1.5 text-xs font-normal text-muted-foreground"
+      >
+        {added ? "Added" : "Add"}
+      </Button>
+    </div>
+  );
+}
+
+// Hidden until there is a braindump to draft from.
+function SuggestBullets({ entry, onAdded }: { entry: Entry; onAdded: () => void }) {
+  const [state, setState] = useState<Async<DraftBullet[]> | null>(null);
+
+  if (!entry.braindump) return null;
+
+  const run = () => {
+    setState({ status: "loading" });
+    suggestBullets(entry.id).then(
+      (drafts) => setState({ status: "ok", data: drafts }),
+      (error: unknown) => setState({ status: "error", message: suggestErrorMessage(error) }),
+    );
+  };
+
+  return (
+    <div className="py-1 pr-2 pl-12">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={run}
+        disabled={state?.status === "loading"}
+        className="h-6 w-fit gap-1 px-1.5 text-xs font-normal text-muted-foreground"
+      >
+        <Sparkles className="size-3" />
+        Suggest bullets
+      </Button>
+      {state?.status === "loading" && (
+        <p className="py-1 text-xs text-muted-foreground">Drafting…</p>
+      )}
+      {state?.status === "error" && (
+        <p className="py-1 text-xs text-muted-foreground">{state.message}</p>
+      )}
+      {state?.status === "ok" && state.data.length === 0 && (
+        <p className="py-1 text-xs text-muted-foreground">Nothing new to suggest.</p>
+      )}
+      {state?.status === "ok" && state.data.length > 0 && (
+        <div className="flex flex-col divide-y">
+          {state.data.map((draft, index) => (
+            <DraftBulletRow
+              key={index}
+              draft={draft}
+              onAdd={() => createBullet(entry.id, draft.text, null).then(onAdded)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) {
   const [open, setOpen] = useState(false);
   const { title, subtitle, dates } = entryLabel(entry.entry_type, entry.fields);
@@ -322,6 +415,7 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
       <CollapsibleContent>
         <EntryFields entry={entry} onEdited={onEdited} />
         {hasBullets && <BraindumpEditor entry={entry} onEdited={onEdited} />}
+        {hasBullets && <SuggestBullets entry={entry} onAdded={reload} />}
         {elements.map((_, index) => (
           <ElementNode
             key={index}
