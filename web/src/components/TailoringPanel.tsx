@@ -157,6 +157,23 @@ function AssessmentSection({
           </div>
         ))}
       </div>
+      {assessment.semantic_coverage.some((m) => m.covered) && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-muted-foreground">
+            Missing keywords actually covered
+          </p>
+          <ul className="flex flex-col gap-2">
+            {assessment.semantic_coverage
+              .filter((m) => m.covered)
+              .map((m) => (
+                <li key={m.keyword} className="text-xs">
+                  <span className="font-medium">{m.keyword}</span>
+                  {m.evidence && <span className="text-muted-foreground"> — {m.evidence}</span>}
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
       {assessment.suggestions.length > 0 && (
         <div>
           <p className="mb-1 text-xs font-medium text-muted-foreground">Suggestions</p>

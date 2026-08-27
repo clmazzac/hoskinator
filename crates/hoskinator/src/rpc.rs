@@ -1129,16 +1129,32 @@ impl AiRpcServer for AiApi {
             .repository_path
             .get()
             .ok_or_else(|| unavailable(RESUME_UNAVAILABLE))?;
-        let resume_yaml = tokio::task::spawn_blocking(move || resume::read(&path))
-            .await
-            .map_err(|error| ErrorObjectOwned::owned(RESUME_IO, error.to_string(), None::<()>))?
-            .map_err(resume_rpc_error)?;
+        let jd_text = jd.text.clone();
+        let (resume_yaml, missing) = tokio::task::spawn_blocking(move || {
+            resume::read(&path).map(|yaml| {
+                let missing = tailoring::match_report(&yaml, &jd_text)
+                    .missing
+                    .into_iter()
+                    .map(|keyword| keyword.term)
+                    .collect::<Vec<_>>();
+                (yaml, missing)
+            })
+        })
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(RESUME_IO, error.to_string(), None::<()>))?
+        .map_err(resume_rpc_error)?;
 
         let config = hoskinator_ai::Config::from_env().ok_or_else(ai_unconfigured)?;
         let transport = hoskinator_ai::AnthropicTransport::new(config.api_key);
-        hoskinator_ai::assess(&transport, &config.assess_model, &resume_yaml, &jd.text)
-            .await
-            .map_err(ai_rpc_error)
+        hoskinator_ai::assess(
+            &transport,
+            &config.assess_model,
+            &resume_yaml,
+            &jd.text,
+            &missing,
+        )
+        .await
+        .map_err(ai_rpc_error)
     }
 }
 
