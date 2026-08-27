@@ -157,6 +157,10 @@ pub trait EntryRpc {
     #[method(name = "entry.update")]
     async fn entry_update(&self, id: i64, fields: serde_json::Value) -> RpcResult<Entry>;
 
+    /// Replaces an entry's braindump. Blank text clears it.
+    #[method(name = "entry.set_braindump")]
+    async fn entry_set_braindump(&self, id: i64, text: Option<String>) -> RpcResult<Entry>;
+
     #[method(name = "entry.delete")]
     async fn entry_delete(&self, id: i64) -> RpcResult<()>;
 }
@@ -980,6 +984,13 @@ impl EntryRpcServer for EntryApi {
     async fn entry_update(&self, id: i64, fields: serde_json::Value) -> RpcResult<Entry> {
         self.store
             .update_entry(id, fields)
+            .await
+            .map_err(store_rpc_error)
+    }
+
+    async fn entry_set_braindump(&self, id: i64, text: Option<String>) -> RpcResult<Entry> {
+        self.store
+            .set_braindump(id, text.as_deref())
             .await
             .map_err(store_rpc_error)
     }

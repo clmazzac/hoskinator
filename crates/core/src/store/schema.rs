@@ -37,6 +37,7 @@ diesel::table! {
         end_date -> Nullable<Text>,
         created_at -> Text,
         search_text -> Text,
+        braindump -> Nullable<Text>,
     }
 }
 

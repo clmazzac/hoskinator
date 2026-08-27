@@ -704,6 +704,47 @@ mod tests {
         assert_eq!(answer["error"]["code"], crate::rpc::ENTRY_NOT_FOUND);
     }
 
+    #[tokio::test]
+    async fn braindump_is_settable_and_clearable_over_http() {
+        let (_dir, router) = test_router().await;
+        let created = call(
+            router.clone(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"entry.create","params":["experience",
+               {"company":"Acme","position":"Engineer"}]}"#,
+        )
+        .await;
+        let id = created["result"]["id"].as_i64().unwrap();
+        assert!(created["result"]["braindump"].is_null());
+
+        let set = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"entry.set_braindump","params":[{id},"  Cut latency in half after the Q2 rewrite.  "]}}"#
+            ),
+        )
+        .await;
+        assert_eq!(
+            set["result"]["braindump"],
+            "Cut latency in half after the Q2 rewrite."
+        );
+
+        let cleared = call(
+            router.clone(),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":3,"method":"entry.set_braindump","params":[{id},"   "]}}"#
+            ),
+        )
+        .await;
+        assert!(cleared["result"]["braindump"].is_null());
+
+        let missing = call(
+            router,
+            r#"{"jsonrpc":"2.0","id":4,"method":"entry.set_braindump","params":[404,"Notes."]}"#,
+        )
+        .await;
+        assert_eq!(missing["error"]["code"], crate::rpc::ENTRY_NOT_FOUND);
+    }
+
     /// Creates an entry of a type that carries bullets and answers with its id.
     async fn entry_with_bullets(router: &Router) -> i64 {
         let created = call(
