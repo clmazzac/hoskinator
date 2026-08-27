@@ -260,7 +260,9 @@ fn login() -> Option<String> {
     (!login.is_empty()).then_some(login)
 }
 
-fn remote(repository_path: &Path) -> Option<String> {
+/// `repository_path`'s `origin` remote URL, if it has one — a plain local `git` read, no network
+/// call and no `gh` involved.
+pub fn remote(repository_path: &Path) -> Option<String> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(repository_path)

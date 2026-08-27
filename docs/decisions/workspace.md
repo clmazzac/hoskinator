@@ -80,3 +80,23 @@ several resumes before one is sent). The GitHub identity is the scope key rather
 checkout's path, because the path can change — a fresh clone, a different machine — while the
 repository on GitHub does not. Applications are not written into the repository itself; the CSV
 export is a manual, one-shot action, not something `Save & push` carries along automatically.
+
+## Scoping applications reads the remote directly, not through `workspace::status`
+
+`ApplicationApi::repository_scope` (used by every `application.*` RPC) calls `workspace::remote`
+directly — a local `git remote get-url origin` — rather than the full `workspace::status`, which it
+had been calling for its `remote_url` field alone.
+
+**Why this matters:** `workspace::status` also checks whether `gh` is installed and, if so, calls
+`gh api user` to report the signed-in login — a live network round trip to GitHub, timed at ~700ms
+in practice, dwarfing every other RPC in the app (a local git or store read is single-digit
+milliseconds). Every application list, create, update, and delete paid that cost to populate two
+fields it never read. Home's own page load calls `application.list` and `workspace.status` in the
+same batch, so this bug alone made every visit to the home page, and every action that reloads its
+application list, feel network-bound for no reason.
+
+**Left as-is:** `workspace.status` itself still calls `gh api user` on every call, because it
+genuinely needs `github_login` for display. `gh auth status` was checked as a faster alternative and
+timed the same — the cost is `gh`'s own process startup, not the specific subcommand — so the only
+remaining lever is caching that result across calls, which is a real trade-off (staleness against a
+`gh auth login`/`logout` run outside the daemon) rather than a pure waste-elimination fix.

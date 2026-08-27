@@ -1251,10 +1251,7 @@ impl ApplicationApi {
             .get()
             .ok_or_else(applications_unavailable)?;
         tokio::task::spawn_blocking(move || {
-            // Only remote_url is read below; default_repository_root plays no part in scoping.
-            workspace::status(Some(&path), None, Path::new(""))
-                .remote_url
-                .and_then(|url| workspace::repository_slug(&url))
+            workspace::remote(&path).and_then(|url| workspace::repository_slug(&url))
         })
         .await
         .map_err(|error| ErrorObjectOwned::owned(APPLICATION_IO, error.to_string(), None::<()>))?
