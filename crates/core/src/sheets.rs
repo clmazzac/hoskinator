@@ -67,22 +67,8 @@ pub fn csv(id: &str) -> Result<String, SheetError> {
 
 /// Writes `applications_sheet` into the config file, keeping anything else already set.
 pub fn remember(config_path: &Path, id: &str) -> Result<(), SheetError> {
-    let existing = std::fs::read_to_string(config_path).unwrap_or_default();
-    let kept: Vec<&str> = existing
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("applications_sheet"))
-        .collect();
-
-    let mut written = kept.join("\n");
-    if !written.is_empty() && !written.ends_with('\n') {
-        written.push('\n');
-    }
-    written.push_str(&format!("applications_sheet = \"{id}\"\n"));
-
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).map_err(SheetError::Config)?;
-    }
-    std::fs::write(config_path, written).map_err(SheetError::Config)
+    crate::config::remember_key(config_path, "applications_sheet", Some(id))
+        .map_err(SheetError::Config)
 }
 
 #[cfg(test)]

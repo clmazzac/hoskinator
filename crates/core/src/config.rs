@@ -19,9 +19,12 @@ pub struct Config {
     pub resume_repo: Option<PathBuf>,
     /// The id of the Google Sheet the application tracker syncs from.
     pub applications_sheet: Option<String>,
+    /// Overridden by `ANTHROPIC_API_KEY` env var. Plaintext on disk, readable only by the file's
+    /// owner (`remember_anthropic_api_key` sets the file to mode 0600 on Unix).
+    pub anthropic_api_key: Option<String>,
 }
 
-/// A configuration file exists but could not be used.
+/// A configuration file exists but could not be used, or could not be written.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("could not read the config file at {path}")]
@@ -36,6 +39,13 @@ pub enum ConfigError {
         path: PathBuf,
         #[source]
         source: toml::de::Error,
+    },
+
+    #[error("could not write the config file at {path}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
     },
 }
 
@@ -62,6 +72,60 @@ impl Config {
         })
     }
 }
+
+/// Rewrites `key`'s line in `config_path` to `value`, or removes the line when `value` is
+/// `None`. Keeps every other line as is, and restricts the file to its owner on Unix.
+pub(crate) fn remember_key(
+    config_path: &Path,
+    key: &str,
+    value: Option<&str>,
+) -> std::io::Result<()> {
+    let existing = std::fs::read_to_string(config_path).unwrap_or_default();
+    let kept: Vec<&str> = existing
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(key))
+        .collect();
+
+    let mut written = kept.join("\n");
+    if !written.is_empty() && !written.ends_with('\n') {
+        written.push('\n');
+    }
+    if let Some(value) = value {
+        written.push_str(&format!("{key} = \"{value}\"\n"));
+    }
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(config_path, &written)?;
+    restrict_to_owner(config_path);
+    Ok(())
+}
+
+/// Writes or clears `anthropic_api_key` in the config file, keeping anything else already set.
+pub fn remember_anthropic_api_key(
+    config_path: &Path,
+    key: Option<&str>,
+) -> Result<(), ConfigError> {
+    remember_key(config_path, "anthropic_api_key", key).map_err(|source| ConfigError::Write {
+        path: config_path.to_path_buf(),
+        source,
+    })
+}
+
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Ok(metadata) = std::fs::metadata(path) {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o600);
+        let _ = std::fs::set_permissions(path, permissions);
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -121,5 +185,59 @@ mod tests {
             ConfigError::Parse { path: reported, .. } => assert_eq!(reported, path),
             other => panic!("expected a parse error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn remembering_the_key_writes_it_and_keeps_other_keys() {
+        let dir = TempDir::new().unwrap();
+        let config = dir.path().join("config.toml");
+        std::fs::write(&config, "resume_repo = \"/srv/resume\"\n").unwrap();
+
+        remember_anthropic_api_key(&config, Some("sk-ant-test")).unwrap();
+
+        let loaded = Config::load(&config).unwrap();
+        assert_eq!(loaded.resume_repo, Some(PathBuf::from("/srv/resume")));
+        assert_eq!(loaded.anthropic_api_key, Some("sk-ant-test".to_string()));
+    }
+
+    #[test]
+    fn remembering_again_replaces_the_previous_key() {
+        let dir = TempDir::new().unwrap();
+        let config = dir.path().join("config.toml");
+
+        remember_anthropic_api_key(&config, Some("first")).unwrap();
+        remember_anthropic_api_key(&config, Some("second")).unwrap();
+
+        let written = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(written.matches("anthropic_api_key").count(), 1);
+        assert_eq!(
+            Config::load(&config).unwrap().anthropic_api_key,
+            Some("second".to_string())
+        );
+    }
+
+    #[test]
+    fn remembering_none_clears_the_key() {
+        let dir = TempDir::new().unwrap();
+        let config = dir.path().join("config.toml");
+        remember_anthropic_api_key(&config, Some("sk-ant-test")).unwrap();
+
+        remember_anthropic_api_key(&config, None).unwrap();
+
+        assert_eq!(Config::load(&config).unwrap().anthropic_api_key, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remembering_restricts_the_file_to_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let config = dir.path().join("config.toml");
+
+        remember_anthropic_api_key(&config, Some("sk-ant-test")).unwrap();
+
+        let mode = std::fs::metadata(&config).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }

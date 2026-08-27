@@ -313,6 +313,16 @@ export function suggestBullets(entryId: number): Promise<DraftBullet[]> {
   return call("ai.suggest_bullets", [entryId]);
 }
 
+/** Whether a key is available, from Hoskinator's own settings or `ANTHROPIC_API_KEY`. */
+export function aiStatus(): Promise<boolean> {
+  return call("ai.status", []);
+}
+
+/** Writes or clears (`null`) the configured Anthropic key. Answers whether AI is now available. */
+export function setAnthropicApiKey(key: string | null): Promise<boolean> {
+  return call("ai.set_api_key", [key]);
+}
+
 export interface Head { branch: string | null; commit_id: string | null }
 export interface Branch { name: string; commit_id: string | null; is_head: boolean }
 export interface RepositoryState { head: Head | null; branches: Branch[] }

@@ -45,3 +45,27 @@ No onboarding text, no "AI-powered" label. A drafted bullet shows its own ground
 of a disclaimer; accepting one is a single "Add" click, and it becomes a normal Bullet — nothing
 about it is marked as AI-originated afterward, the same way a Variant carries no note about who
 typed it.
+
+## The Anthropic key can be set from the UI, not only `ANTHROPIC_API_KEY`
+
+A settings dialog (the key icon in `MenuBar`) writes `anthropic_api_key` into Hoskinator's own
+`config.toml`, alongside `resume_repo` and `applications_sheet`. `hoskinator_ai::Config::resolve`
+checks it first and falls back to the environment variable, so a key set from the UI takes effect
+immediately without an env var or a restart.
+
+**Anthropic only, not OpenRouter:** ADR-0005 and `docs/decisions/tailoring.md` already settled this
+for a tiny model; this dialog does not reopen it.
+
+**Plaintext on disk, not a keychain:** `config.toml` already holds equivalent trust-level settings
+un-encrypted, and Hoskinator is a local, single-user tool. The one protection added is that
+`remember_key` sets the file to mode 0600 (owner-only) on every write, key or not.
+
+**Never round-tripped back to the client:** the RPC surface is `ai.set_api_key(key) -> bool` and
+`ai.status() -> bool` — never a getter for the key itself. The dialog always starts with an empty
+field and shows only whether a key is configured, so a typed key can't leak back out over a
+future request, a log line, or a screen share.
+
+**`remember_key` is now shared, not triplicated:** `sheets::remember` and
+`workspace::remember_repository` already rewrote one line of `config.toml` in place, keeping every
+other line; adding a third copy for `anthropic_api_key` was the point to extract the shared
+`config::remember_key`, which the other two now call.

@@ -150,8 +150,7 @@ mod tests {
     fn config_naming(path: &str) -> Config {
         Config {
             home: Some(PathBuf::from(path)),
-            resume_repo: None,
-            applications_sheet: None,
+            ..Config::default()
         }
     }
 
