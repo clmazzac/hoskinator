@@ -67,3 +67,24 @@ instead of visible text.
 
 **Why:** this has regressed more than once — a text label ("Day" / "Night") creeping back onto the
 theme toggle. Recording it here so it stops recurring.
+
+## Resume outline edits are optimistic; the round trip runs after, not before
+
+Every mutation in `ResumeOutline` (reorder, remove, place, move) used to `await` its RPC call, then
+refetch the whole outline before the screen changed at all — for a drag-and-drop-driven surface,
+that meant every drop paused, sometimes for multiple sequential round trips (`resumeStep` alone
+reads `resume.yaml` twice around the actual mutation). `run()` now applies the resulting
+`ResumeSection[]` locally and synchronously, before the mutation is even sent; the real call and its
+`resumeStep`/reload still happen, just after, to persist the change and to catch drift. A failure
+rolls the optimistic guess back to what was on screen before the drop, rather than leaving a change
+that never reached the server.
+
+**Why still call `load()` on success instead of trusting the optimistic guess as final:** the
+optimistic transforms are pure reorders/inserts of data the outline already had — they should match
+what the server computes, but "should" isn't "always"; the reload is a cheap, invisible-on-the-happy-
+path check that they didn't drift.
+
+**Known gap:** two mutations fired in quick succession can have the first one's reload land after
+the second's optimistic update, visibly reverting it until the second's own reload arrives a moment
+later. Rare enough in a single-user drag-one-thing-at-a-time UI not to be worth a request-generation
+guard yet — revisit if it shows up in practice.
