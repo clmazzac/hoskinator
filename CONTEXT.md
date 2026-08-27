@@ -15,6 +15,12 @@ _Avoid_: workspace (ambiguous with the Cargo sense — the repo is itself a Carg
 **Entry**:
 A single record in the Master Store — a job, project, degree, publication, award, skill line, etc. Each Entry has a **type** mirroring rendercv's entry types (experience, education, normal, publication, one-line, bullet, numbered, reversed-numbered, text), which determines its fields and whether it carries bullets. Also carries section eligibility and (where applicable) bullets. (Tagging is a deferred post-v1 concept.)
 
+**Braindump**:
+Free-write notes on an Entry — unstructured detail about a job or project, kept in the Master Store
+as a plain text column, never in `fields` and never in a `resume.yaml`. The raw material AI bullet
+suggestions draw from.
+_Avoid_: note (that name is taken by `Variant.note`).
+
 **Section**:
 A managed record in the Master Store — `{ name, entry_type }` — corresponding directly to a rendercv section (a list of entries of one type). Names are user-defined (e.g. "Experience", "Selected Projects", "Open Source"); there is no fixed section enum. An Entry is eligible for the sections whose `entry_type` matches its type, and on any one resume appears under exactly one section. Curated records, not ad-hoc strings, so the section vocabulary cannot drift.
 _Avoid_: category.

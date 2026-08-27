@@ -243,6 +243,8 @@ pub struct Entry {
     pub entry_type: EntryType,
     pub fields: EntryFields,
     pub created_at: String,
+    /// Free-write notes about this job or project — never rendercv input, never in a resume.yaml.
+    pub braindump: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for Entry {
@@ -254,6 +256,7 @@ impl<'de> Deserialize<'de> for Entry {
             entry_type: EntryType,
             fields: serde_json::Value,
             created_at: String,
+            braindump: Option<String>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -265,6 +268,7 @@ impl<'de> Deserialize<'de> for Entry {
             entry_type: wire.entry_type,
             fields,
             created_at: wire.created_at,
+            braindump: wire.braindump,
         })
     }
 }
@@ -278,6 +282,7 @@ struct EntryRow {
     entry_type: String,
     fields: String,
     created_at: String,
+    braindump: Option<String>,
 }
 
 impl EntryRow {
@@ -292,6 +297,7 @@ impl EntryRow {
             entry_type,
             fields,
             created_at: self.created_at,
+            braindump: self.braindump,
         })
     }
 }
@@ -322,6 +328,13 @@ impl FieldsRow {
             search_text: fields.search_text(),
         })
     }
+}
+
+/// Trims braindump text, treating a blank string as clearing it.
+fn clean_braindump(text: Option<&str>) -> Option<String> {
+    text.map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
 }
 
 /// Reads stored field JSON back into the shape `entry_type` names.
@@ -415,6 +428,24 @@ impl Store {
         self.with_connection(move |connection| {
             diesel::update(entry_table::table.find(id))
                 .set(row)
+                .returning(EntryRow::as_returning())
+                .get_result(connection)
+                .map_err(StoreError::WriteEntry)
+        })
+        .await?
+        .decode()
+    }
+
+    /// Replaces an entry's braindump. Blank text clears it.
+    pub async fn set_braindump(&self, id: i64, text: Option<&str>) -> Result<Entry, StoreError> {
+        self.entry(id)
+            .await?
+            .ok_or(EntryError::NoSuchEntry { id })?;
+        let braindump = clean_braindump(text);
+
+        self.with_connection(move |connection| {
+            diesel::update(entry_table::table.find(id))
+                .set(entry_table::braindump.eq(braindump))
                 .returning(EntryRow::as_returning())
                 .get_result(connection)
                 .map_err(StoreError::WriteEntry)
@@ -750,6 +781,54 @@ mod tests {
 
         assert!(matches!(
             entry_error(missing),
+            EntryError::NoSuchEntry { id: 404 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_new_entry_has_no_braindump() {
+        let (_dir, store) = open_temp_store().await;
+        let created = store.create_entry(&experience()).await.unwrap();
+
+        assert_eq!(created.braindump, None);
+    }
+
+    #[tokio::test]
+    async fn braindump_is_set_and_trimmed() {
+        let (_dir, store) = open_temp_store().await;
+        let created = store.create_entry(&experience()).await.unwrap();
+
+        let updated = store
+            .set_braindump(created.id, Some("  Shipped the migration.  \n"))
+            .await
+            .unwrap();
+
+        assert_eq!(updated.braindump.as_deref(), Some("Shipped the migration."));
+        assert_eq!(store.entry(created.id).await.unwrap(), Some(updated));
+    }
+
+    #[tokio::test]
+    async fn blank_braindump_clears_it() {
+        let (_dir, store) = open_temp_store().await;
+        let created = store.create_entry(&experience()).await.unwrap();
+        store
+            .set_braindump(created.id, Some("Notes."))
+            .await
+            .unwrap();
+
+        let cleared = store.set_braindump(created.id, Some("   ")).await.unwrap();
+
+        assert_eq!(cleared.braindump, None);
+    }
+
+    #[tokio::test]
+    async fn setting_braindump_on_an_absent_entry_is_rejected() {
+        let (_dir, store) = open_temp_store().await;
+
+        let rejected = store.set_braindump(404, Some("Notes.")).await.unwrap_err();
+
+        assert!(matches!(
+            entry_error(rejected),
             EntryError::NoSuchEntry { id: 404 }
         ));
     }
