@@ -3,7 +3,7 @@
 //! Method names and error codes here are the stable surface every frontend speaks (ADR-0003).
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use hoskinator_core::application::{Application, NewApplication, STATUSES};
 use hoskinator_core::bullet::{Bullet, BulletError, Variant};
@@ -457,14 +457,35 @@ pub trait RenderRpc {
     async fn render_docx(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedDocx>;
 }
 
+/// The resume repository currently in use, shared and read fresh by every RPC service.
+#[derive(Clone)]
+pub struct ActiveRepository(Arc<RwLock<Option<PathBuf>>>);
+
+impl ActiveRepository {
+    pub fn new(path: Option<PathBuf>) -> Self {
+        Self(Arc::new(RwLock::new(path)))
+    }
+
+    pub fn get(&self) -> Option<PathBuf> {
+        self.0
+            .read()
+            .expect("active repository lock was poisoned")
+            .clone()
+    }
+
+    pub fn set(&self, path: Option<PathBuf>) {
+        *self.0.write().expect("active repository lock was poisoned") = path;
+    }
+}
+
 /// Serves the Profile methods from one store.
 pub struct ProfileApi {
     store: Arc<Store>,
-    repository_path: Option<PathBuf>,
+    repository_path: ActiveRepository,
 }
 
 impl ProfileApi {
-    pub fn new(store: Arc<Store>, repository_path: Option<PathBuf>) -> Self {
+    pub fn new(store: Arc<Store>, repository_path: ActiveRepository) -> Self {
         Self {
             store,
             repository_path,
@@ -574,7 +595,7 @@ impl ProfileRpcServer for ProfileApi {
         // Best-effort: resume.yaml's cv: header carries a snapshot of the Profile, refreshed on
         // every resume write. Without this, that snapshot would only catch up on the next
         // placement, reorder, or other edit — not on the Profile edit itself.
-        if let Some(path) = self.repository_path.clone() {
+        if let Some(path) = self.repository_path.get() {
             let _ = tokio::task::spawn_blocking(move || {
                 resume::read(&path).and_then(|text| resume::write(&path, text, &profile))
             })
@@ -588,20 +609,20 @@ impl ProfileRpcServer for ProfileApi {
 /// Lazily opens the configured repository for each repository RPC.
 #[derive(Clone)]
 pub struct ResumeRepositoryProvider {
-    path: Option<PathBuf>,
+    path: ActiveRepository,
 }
 
 impl ResumeRepositoryProvider {
-    pub fn new(path: Option<PathBuf>) -> Self {
+    pub fn new(path: ActiveRepository) -> Self {
         Self { path }
     }
 
     fn open(&self) -> Result<ResumeRepository, RepositoryError> {
         let path = self
             .path
-            .as_deref()
+            .get()
             .ok_or(RepositoryError::MissingConfiguration)?;
-        ResumeRepository::open_or_init(path)
+        ResumeRepository::open_or_init(&path)
     }
 }
 
@@ -685,11 +706,11 @@ impl RepositoryRpcServer for RepositoryApi {
 /// Serves the resume.yaml methods from the configured user-owned worktree.
 pub struct ResumeApi {
     store: Arc<Store>,
-    repository_path: Option<PathBuf>,
+    repository_path: ActiveRepository,
 }
 
 impl ResumeApi {
-    pub fn new(store: Arc<Store>, repository_path: Option<PathBuf>) -> Self {
+    pub fn new(store: Arc<Store>, repository_path: ActiveRepository) -> Self {
         Self {
             store,
             repository_path,
@@ -697,7 +718,7 @@ impl ResumeApi {
     }
 
     fn repository_path(&self) -> RpcResult<PathBuf> {
-        self.repository_path.clone().ok_or_else(resume_unavailable)
+        self.repository_path.get().ok_or_else(resume_unavailable)
     }
 
     async fn operation<T, F>(&self, operation: F) -> RpcResult<T>
@@ -866,11 +887,11 @@ impl ResumeRpcServer for ResumeApi {
 
 /// Serves rendering from the configured user-owned worktree.
 pub struct RenderApi {
-    repository_path: Option<PathBuf>,
+    repository_path: ActiveRepository,
 }
 
 impl RenderApi {
-    pub fn new(repository_path: Option<PathBuf>) -> Self {
+    pub fn new(repository_path: ActiveRepository) -> Self {
         Self { repository_path }
     }
 }
@@ -890,10 +911,7 @@ impl RenderRpcServer for RenderApi {
     }
 
     async fn render_run(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedPdf> {
-        let repository = self
-            .repository_path
-            .clone()
-            .ok_or_else(render_unavailable)?;
+        let repository = self.repository_path.get().ok_or_else(render_unavailable)?;
 
         blocking(move || render::pdf(&repository, &directory, &file_name))
             .await?
@@ -913,10 +931,7 @@ impl RenderRpcServer for RenderApi {
     }
 
     async fn render_docx(&self, directory: PathBuf, file_name: String) -> RpcResult<RenderedDocx> {
-        let repository = self
-            .repository_path
-            .clone()
-            .ok_or_else(render_unavailable)?;
+        let repository = self.repository_path.get().ok_or_else(render_unavailable)?;
 
         blocking(move || render::docx(&repository, &directory, &file_name))
             .await?
@@ -1297,11 +1312,11 @@ impl ApplicationRpcServer for ApplicationApi {
 
 /// Serves repository setup, the GitHub account behind it, and the linked application sheet.
 pub struct WorkspaceApi {
-    repository_path: Option<PathBuf>,
+    repository_path: ActiveRepository,
 }
 
 impl WorkspaceApi {
-    pub fn new(repository_path: Option<PathBuf>) -> Self {
+    pub fn new(repository_path: ActiveRepository) -> Self {
         Self { repository_path }
     }
 
@@ -1313,8 +1328,7 @@ impl WorkspaceApi {
         }
     }
 
-    /// Reads the linked sheet id fresh from disk, so a sheet just linked is usable immediately —
-    /// unlike `repository_path`, which is fixed for the daemon's lifetime.
+    /// Reads the linked sheet id fresh from disk.
     fn linked_sheet() -> Option<String> {
         hoskinator_core::home::Home::config()
             .ok()
@@ -1325,7 +1339,7 @@ impl WorkspaceApi {
 #[async_trait]
 impl WorkspaceRpcServer for WorkspaceApi {
     async fn workspace_status(&self) -> RpcResult<WorkspaceStatus> {
-        let path = self.repository_path.clone();
+        let path = self.repository_path.get();
         workspace_blocking(move || {
             Ok(workspace::status(
                 path.as_deref(),
@@ -1344,9 +1358,11 @@ impl WorkspaceRpcServer for WorkspaceApi {
         name: String,
         destination: PathBuf,
     ) -> RpcResult<WorkspaceStatus> {
+        let active = self.repository_path.clone();
         workspace_blocking(move || {
             let path = workspace::create_github(&name, &destination)?;
             WorkspaceApi::adopt(&path)?;
+            active.set(Some(path.clone()));
             Ok(workspace::status(
                 Some(&path),
                 WorkspaceApi::linked_sheet().as_deref(),
@@ -1360,9 +1376,11 @@ impl WorkspaceRpcServer for WorkspaceApi {
         source: String,
         destination: PathBuf,
     ) -> RpcResult<WorkspaceStatus> {
+        let active = self.repository_path.clone();
         workspace_blocking(move || {
             let path = workspace::connect_github(&source, &destination)?;
             WorkspaceApi::adopt(&path)?;
+            active.set(Some(path.clone()));
             Ok(workspace::status(
                 Some(&path),
                 WorkspaceApi::linked_sheet().as_deref(),
@@ -1383,15 +1401,12 @@ impl WorkspaceRpcServer for WorkspaceApi {
     }
 
     async fn workspace_push(&self, branch: String) -> RpcResult<()> {
-        let path = self
-            .repository_path
-            .clone()
-            .ok_or_else(resume_unavailable)?;
+        let path = self.repository_path.get().ok_or_else(resume_unavailable)?;
         workspace_blocking(move || workspace::push(&path, &branch)).await
     }
 
     async fn workspace_link_sheet(&self, link: String) -> RpcResult<WorkspaceStatus> {
-        let path = self.repository_path.clone();
+        let path = self.repository_path.get();
         sheet_blocking(move || {
             let id = sheets::id_from(&link)?;
             if let Some(config) = hoskinator_core::home::config_file_path() {
@@ -1564,6 +1579,16 @@ mod tests {
 
     fn io_error() -> std::io::Error {
         std::io::Error::other("disk on fire")
+    }
+
+    #[test]
+    fn a_clone_of_active_repository_sees_a_later_set() {
+        let active = ActiveRepository::new(Some(PathBuf::from("/old")));
+        let clone = active.clone();
+
+        active.set(Some(PathBuf::from("/new")));
+
+        assert_eq!(clone.get(), Some(PathBuf::from("/new")));
     }
 
     #[test]
