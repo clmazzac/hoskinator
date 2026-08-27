@@ -25,6 +25,9 @@ pub const HOME_ENV: &str = "HOSKINATOR_HOME";
 /// Directory within Home holding the store and anything written beside it.
 const STORE_DIR: &str = "store";
 
+/// Directory within Home holding resume repositories that were not given a location of their own.
+const REPOSITORIES_DIR: &str = "repositories";
+
 /// Name of the libSQL database within the store directory.
 const STORE_FILE: &str = "hoskinator.db";
 
@@ -117,6 +120,12 @@ impl Home {
     /// Path to the libSQL database. Resolution does not create it; the store does.
     pub fn store_path(&self) -> PathBuf {
         self.store_dir().join(STORE_FILE)
+    }
+
+    /// Where a new resume repository is cloned by default, absent a location of the user's
+    /// choosing.
+    pub fn repositories_dir(&self) -> PathBuf {
+        self.root.join(REPOSITORIES_DIR)
     }
 }
 
