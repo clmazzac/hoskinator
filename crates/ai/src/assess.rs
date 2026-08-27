@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::transport::{Transport, TransportError};
+use crate::transport::{Transport, TransportError, strip_code_fence};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Assessment {
@@ -88,21 +88,6 @@ fn prompt(resume_yaml: &str, jd_text: &str, missing_keywords: &[String]) -> Stri
          Job description:\n{jd_text}\n\n\
          Resume (rendercv YAML):\n{resume_yaml}"
     )
-}
-
-/// Strips a ```json ... ``` or ``` ... ``` fence if the model wrapped its JSON in one.
-fn strip_code_fence(reply: &str) -> &str {
-    let trimmed = reply.trim();
-    let Some(without_open) = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-    else {
-        return trimmed;
-    };
-    without_open
-        .strip_suffix("```")
-        .unwrap_or(without_open)
-        .trim()
 }
 
 #[cfg(test)]
