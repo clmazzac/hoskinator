@@ -91,6 +91,40 @@ function Note({ children }: { children: React.ReactNode }) {
   return <p className="px-3 py-1.5 text-xs text-muted-foreground">{children}</p>;
 }
 
+/// Splices `item` from `from` to `to`, `to` read as an insertion index (as `Array.splice` and
+/// every `resume.move_*` RPC both take it) rather than a post-removal index.
+function moved<T>(items: T[], from: number, to: number): T[] {
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(to > from ? to - 1 : to, 0, item);
+  return next;
+}
+
+/// Renumbers `entries` to match their array position — what removing or reordering one does to
+/// every entry after it, since `ResumeEntry.index` is a file position, not a stable id.
+function reindexed(entries: ResumeEntry[]): ResumeEntry[] {
+  return entries.map((entry, index) => ({ ...entry, index }));
+}
+
+function updateEntries(
+  sections: ResumeSection[],
+  section: string,
+  update: (entries: ResumeEntry[]) => ResumeEntry[],
+): ResumeSection[] {
+  return sections.map((s) => (s.name === section ? { ...s, entries: update(s.entries) } : s));
+}
+
+function updateEntry(
+  sections: ResumeSection[],
+  section: string,
+  index: number,
+  update: (entry: ResumeEntry) => ResumeEntry,
+): ResumeSection[] {
+  return updateEntries(sections, section, (entries) =>
+    entries.map((entry) => (entry.index === index ? update(entry) : entry)),
+  );
+}
+
 function RemoveButton({
   label,
   onClick,
@@ -128,12 +162,7 @@ function ElementRow({
   const elements = splitElements(details);
   const [target, setTarget] = useState<number | null>(null);
 
-  const move = (from: number, to: number) => {
-    const next = [...elements];
-    const [moved] = next.splice(from, 1);
-    next.splice(to > from ? to - 1 : to, 0, moved);
-    onChange(joinElements(next));
-  };
+  const move = (from: number, to: number) => onChange(joinElements(moved(elements, from, to)));
 
   return (
     <div className="flex flex-wrap items-center gap-1 py-1 pr-2 pl-9">
@@ -414,19 +443,44 @@ export default function ResumeOutline() {
 
   useReloadOnHistory(load);
 
+  // Applies `optimistic` before `work` is even sent, then still runs `work` and reconciles via
+  // `load` on success. On failure, replaces the optimistic guess with the outline from before it.
   const run = useCallback(
-    (work: () => Promise<unknown>) =>
-      resumeStep(work).then(load, (failure: Error) => setError(failure.message)),
+    (
+      optimistic: (prev: ResumeSection[]) => ResumeSection[],
+      work: () => Promise<unknown>,
+    ) => {
+      let before: ResumeSection[] | null = null;
+      setSections((prev) => {
+        before = prev;
+        return prev ? optimistic(prev) : prev;
+      });
+      resumeStep(work).then(load, (failure: Error) => {
+        setError(failure.message);
+        setSections(before);
+      });
+    },
     [load],
   );
 
   const dropEntry = useCallback(
     (section: string, entryId: number) => {
-      run(async () => {
-        const stored = await getEntry(entryId);
-        if (!stored) throw new Error(`entry ${entryId} is no longer in the store`);
-        return placeEntry(section, stored.entry_type, stored.fields);
-      });
+      getEntry(entryId).then((stored) => {
+        if (!stored) {
+          setError(`entry ${entryId} is no longer in the store`);
+          return;
+        }
+        run(
+          (prev) =>
+            updateEntries(prev, section, (entries) =>
+              reindexed([
+                ...entries,
+                { index: entries.length, fields: stored.fields, highlights: [] },
+              ]),
+            ),
+          () => placeEntry(section, stored.entry_type, stored.fields),
+        );
+      }, (failure: Error) => setError(failure.message));
     },
     [run],
   );
@@ -446,7 +500,7 @@ export default function ResumeOutline() {
         const name = draggedSection(event);
         if (!name) return;
         event.preventDefault();
-        run(() => placeSection(name));
+        run((prev) => [...prev, { name, entries: [] }], () => placeSection(name));
       }}
     >
       {sections.length === 0 && (
@@ -511,7 +565,9 @@ export default function ResumeOutline() {
                 event.preventDefault();
                 event.stopPropagation();
                 const to = heldEdge.edge === "after" ? index + 1 : index;
-                if (to !== from && to !== from + 1) run(() => moveResumeSection(from, to));
+                if (to !== from && to !== from + 1) {
+                  run((prev) => moved(prev, from, to), () => moveResumeSection(from, to));
+                }
               }}
             >
               <span className="text-xs font-semibold">{section.name}</span>
@@ -522,15 +578,60 @@ export default function ResumeOutline() {
                 key={`${entry.index}-${JSON.stringify(entry.fields)}`}
                 section={section.name}
                 entry={entry}
-                onPlaceWording={(s, i, text) => run(() => placeBullet(s, i, text))}
-                onRemoveEntry={(s, i) => run(() => removeResumeEntry(s, i))}
-                onRemoveWording={(s, i, at) => run(() => removeResumeBullet(s, i, at))}
-                onSetField={(s, i, key, value) =>
-                  run(() => setResumeEntryField(s, i, key, value))
+                onPlaceWording={(s, i, text) =>
+                  run(
+                    (prev) =>
+                      updateEntry(prev, s, i, (entry) => ({
+                        ...entry,
+                        highlights: [...entry.highlights, text],
+                      })),
+                    () => placeBullet(s, i, text),
+                  )
                 }
-                onMoveEntry={(s, from, to) => run(() => moveResumeEntry(s, from, to))}
+                onRemoveEntry={(s, i) =>
+                  run(
+                    (prev) =>
+                      updateEntries(prev, s, (entries) =>
+                        reindexed(entries.filter((entry) => entry.index !== i)),
+                      ),
+                    () => removeResumeEntry(s, i),
+                  )
+                }
+                onRemoveWording={(s, i, at) =>
+                  run(
+                    (prev) =>
+                      updateEntry(prev, s, i, (entry) => ({
+                        ...entry,
+                        highlights: entry.highlights.filter((_, h) => h !== at),
+                      })),
+                    () => removeResumeBullet(s, i, at),
+                  )
+                }
+                onSetField={(s, i, key, value) =>
+                  run(
+                    (prev) =>
+                      updateEntry(prev, s, i, (entry) => ({
+                        ...entry,
+                        fields: { ...(entry.fields as Record<string, unknown>), [key]: value },
+                      })),
+                    () => setResumeEntryField(s, i, key, value),
+                  )
+                }
+                onMoveEntry={(s, from, to) =>
+                  run(
+                    (prev) => updateEntries(prev, s, (entries) => reindexed(moved(entries, from, to))),
+                    () => moveResumeEntry(s, from, to),
+                  )
+                }
                 onMoveWording={(s, i, from, to) =>
-                  run(() => moveResumeBullet(s, i, from, to))
+                  run(
+                    (prev) =>
+                      updateEntry(prev, s, i, (entry) => ({
+                        ...entry,
+                        highlights: moved(entry.highlights, from, to),
+                      })),
+                    () => moveResumeBullet(s, i, from, to),
+                  )
                 }
                 onKeep={setKeeping}
               />
