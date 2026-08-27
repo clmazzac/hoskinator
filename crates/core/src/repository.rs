@@ -579,14 +579,15 @@ impl ResumeRepository {
         let head = self.local_head()?;
         let head_commit = head.peel_to_commit().map_err(|_| precondition_error())?;
         let head_name = head.shorthand().unwrap_or_default().to_string();
+        let outcome = |kind: &str, commit_id: git2::Oid| MergeOutcome {
+            branch: head_name.clone(),
+            from: from.to_string(),
+            kind: kind.to_string(),
+            commit_id: Some(commit_id.to_string()),
+        };
 
         if head_commit.id() == source_commit.id() {
-            return Ok(MergeOutcome {
-                branch: head_name,
-                from: from.to_string(),
-                kind: "already-current".into(),
-                commit_id: Some(head_commit.id().to_string()),
-            });
+            return Ok(outcome("already-current", head_commit.id()));
         }
 
         let annotated = self
@@ -599,12 +600,7 @@ impl ResumeRepository {
             .map_err(RepositoryError::Operation)?;
 
         if analysis.is_up_to_date() {
-            return Ok(MergeOutcome {
-                branch: head_name,
-                from: from.to_string(),
-                kind: "already-current".into(),
-                commit_id: Some(head_commit.id().to_string()),
-            });
+            return Ok(outcome("already-current", head_commit.id()));
         }
 
         if analysis.is_fast_forward() {
@@ -621,12 +617,7 @@ impl ResumeRepository {
             self.repository
                 .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
                 .map_err(RepositoryError::Operation)?;
-            return Ok(MergeOutcome {
-                branch: head_name,
-                from: from.to_string(),
-                kind: "fast-forward".into(),
-                commit_id: Some(source_commit.id().to_string()),
-            });
+            return Ok(outcome("fast-forward", source_commit.id()));
         }
 
         let mut index = self
@@ -677,12 +668,7 @@ impl ResumeRepository {
             .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .map_err(RepositoryError::Operation)?;
 
-        Ok(MergeOutcome {
-            branch: head_name,
-            from: from.to_string(),
-            kind: "merged".into(),
-            commit_id: Some(id.to_string()),
-        })
+        Ok(outcome("merged", id))
     }
 
     fn local_head(&self) -> Result<git2::Reference<'_>, RepositoryError> {
@@ -750,40 +736,40 @@ fn utf8_path(path: &Path) -> Result<String, RepositoryError> {
     path.to_str().map(str::to_owned).ok_or_else(non_utf8_error)
 }
 
+/// The first of `flags` that `status` contains, in priority order.
+fn file_change(status: Status, flags: [(Status, FileChange); 6]) -> Option<FileChange> {
+    flags
+        .into_iter()
+        .find(|(flag, _)| status.contains(*flag))
+        .map(|(_, change)| change)
+}
+
 fn index_change(status: Status) -> Option<FileChange> {
-    if status.contains(Status::CONFLICTED) {
-        Some(FileChange::Conflicted)
-    } else if status.contains(Status::INDEX_NEW) {
-        Some(FileChange::Added)
-    } else if status.contains(Status::INDEX_MODIFIED) {
-        Some(FileChange::Modified)
-    } else if status.contains(Status::INDEX_DELETED) {
-        Some(FileChange::Deleted)
-    } else if status.contains(Status::INDEX_RENAMED) {
-        Some(FileChange::Renamed)
-    } else if status.contains(Status::INDEX_TYPECHANGE) {
-        Some(FileChange::Typechange)
-    } else {
-        None
-    }
+    file_change(
+        status,
+        [
+            (Status::CONFLICTED, FileChange::Conflicted),
+            (Status::INDEX_NEW, FileChange::Added),
+            (Status::INDEX_MODIFIED, FileChange::Modified),
+            (Status::INDEX_DELETED, FileChange::Deleted),
+            (Status::INDEX_RENAMED, FileChange::Renamed),
+            (Status::INDEX_TYPECHANGE, FileChange::Typechange),
+        ],
+    )
 }
 
 fn worktree_change(status: Status) -> Option<FileChange> {
-    if status.contains(Status::CONFLICTED) {
-        Some(FileChange::Conflicted)
-    } else if status.contains(Status::WT_NEW) {
-        Some(FileChange::Untracked)
-    } else if status.contains(Status::WT_MODIFIED) {
-        Some(FileChange::Modified)
-    } else if status.contains(Status::WT_DELETED) {
-        Some(FileChange::Deleted)
-    } else if status.contains(Status::WT_RENAMED) {
-        Some(FileChange::Renamed)
-    } else if status.contains(Status::WT_TYPECHANGE) {
-        Some(FileChange::Typechange)
-    } else {
-        None
-    }
+    file_change(
+        status,
+        [
+            (Status::CONFLICTED, FileChange::Conflicted),
+            (Status::WT_NEW, FileChange::Untracked),
+            (Status::WT_MODIFIED, FileChange::Modified),
+            (Status::WT_DELETED, FileChange::Deleted),
+            (Status::WT_RENAMED, FileChange::Renamed),
+            (Status::WT_TYPECHANGE, FileChange::Typechange),
+        ],
+    )
 }
 
 fn delta_change(status: git2::Delta) -> FileChange {
