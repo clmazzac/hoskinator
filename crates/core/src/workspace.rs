@@ -26,6 +26,12 @@ pub enum WorkspaceError {
     },
     #[error("{path} already exists and is not an empty directory")]
     Occupied { path: PathBuf },
+    #[error("could not create {path}")]
+    CreateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("could not write the configuration")]
     Config(#[source] std::io::Error),
 }
@@ -45,10 +51,16 @@ pub struct WorkspaceStatus {
     pub remote_url: Option<String>,
     /// The id of the Google Sheet the application tracker syncs from, if one is linked.
     pub applications_sheet: Option<String>,
+    /// Where a new repository is cloned by default, absent a location of the user's choosing.
+    pub default_repository_root: PathBuf,
 }
 
 /// Reads how the workspace stands.
-pub fn status(repository_path: Option<&Path>, applications_sheet: Option<&str>) -> WorkspaceStatus {
+pub fn status(
+    repository_path: Option<&Path>,
+    applications_sheet: Option<&str>,
+    default_repository_root: &Path,
+) -> WorkspaceStatus {
     let gh_installed = which(GH);
     let github_login = if gh_installed { login() } else { None };
     let repository_ready = repository_path.is_some_and(|path| path.join(".git").exists());
@@ -65,6 +77,7 @@ pub fn status(repository_path: Option<&Path>, applications_sheet: Option<&str>) 
         repository_ready,
         remote_url,
         applications_sheet: applications_sheet.map(str::to_string),
+        default_repository_root: default_repository_root.to_path_buf(),
     }
 }
 
@@ -72,6 +85,7 @@ pub fn status(repository_path: Option<&Path>, applications_sheet: Option<&str>) 
 pub fn create_github(name: &str, destination: &Path) -> Result<PathBuf, WorkspaceError> {
     require_gh()?;
     ensure_free(destination)?;
+    let parent = ensure_parent(destination)?;
 
     run(
         GH,
@@ -84,24 +98,55 @@ pub fn create_github(name: &str, destination: &Path) -> Result<PathBuf, Workspac
             "--description",
             "Resumes, managed by Hoskinator",
         ],
-        destination.parent().unwrap_or(Path::new(".")),
+        &parent,
     )?;
 
     Ok(destination.to_path_buf())
 }
 
 /// Clones an existing repository to `destination`. `source` is anything `gh repo clone` accepts.
+///
+/// A no-op if `destination` already holds a clone of `source`.
 pub fn connect_github(source: &str, destination: &Path) -> Result<PathBuf, WorkspaceError> {
     require_gh()?;
+
+    if already_connected(destination, source) {
+        return Ok(destination.to_path_buf());
+    }
+
     ensure_free(destination)?;
+    let parent = ensure_parent(destination)?;
 
     run(
         GH,
         &["repo", "clone", source, &destination.to_string_lossy()],
-        destination.parent().unwrap_or(Path::new(".")),
+        &parent,
     )?;
 
     Ok(destination.to_path_buf())
+}
+
+/// Whether `destination` already holds a clone of `source`.
+fn already_connected(destination: &Path, source: &str) -> bool {
+    if !destination.join(".git").exists() {
+        return false;
+    }
+    remote(destination).is_some_and(|origin| same_repository(&origin, source))
+}
+
+/// Whether a remote URL and a `gh repo clone`-style source name the same repository, ignoring
+/// scheme, host, and a trailing `.git`.
+fn same_repository(remote_url: &str, source: &str) -> bool {
+    owner_and_name(remote_url) == owner_and_name(source)
+}
+
+/// The trailing `owner/name` of a repository reference — a bare `owner/name`, or a `.git`-suffixed
+/// HTTPS or SSH remote URL.
+fn owner_and_name(reference: &str) -> String {
+    let trimmed = reference.trim_end_matches('/').trim_end_matches(".git");
+    let mut segments: Vec<&str> = trimmed.rsplit(['/', ':']).take(2).collect();
+    segments.reverse();
+    segments.join("/").to_lowercase()
 }
 
 /// Pushes the current branch to `origin`, setting upstream the first time.
@@ -169,6 +214,16 @@ fn require_gh() -> Result<(), WorkspaceError> {
         return Err(WorkspaceError::GhSignedOut);
     }
     Ok(())
+}
+
+/// `destination`'s parent, creating it if it does not exist yet.
+fn ensure_parent(destination: &Path) -> Result<PathBuf, WorkspaceError> {
+    let parent = destination.parent().unwrap_or(Path::new(".")).to_path_buf();
+    std::fs::create_dir_all(&parent).map_err(|source| WorkspaceError::CreateDirectory {
+        path: parent.clone(),
+        source,
+    })?;
+    Ok(parent)
 }
 
 fn ensure_free(destination: &Path) -> Result<(), WorkspaceError> {
@@ -298,5 +353,39 @@ mod tests {
     #[test]
     fn a_url_with_no_owner_segment_is_not_a_slug() {
         assert_eq!(repository_slug("resume-store"), None);
+    }
+
+    #[test]
+    fn a_bare_owner_and_name_matches_itself() {
+        assert!(same_repository("clmazzac/resume-store", "clmazzac/resume-store"));
+    }
+
+    #[test]
+    fn an_https_remote_matches_the_bare_source_it_was_cloned_from() {
+        assert!(same_repository(
+            "https://github.com/clmazzac/resume-store.git",
+            "clmazzac/resume-store",
+        ));
+    }
+
+    #[test]
+    fn an_ssh_remote_matches_the_bare_source_it_was_cloned_from() {
+        assert!(same_repository(
+            "git@github.com:clmazzac/resume-store.git",
+            "clmazzac/resume-store",
+        ));
+    }
+
+    #[test]
+    fn comparison_is_case_insensitive() {
+        assert!(same_repository("Clmazzac/Resume-Store", "clmazzac/resume-store"));
+    }
+
+    #[test]
+    fn a_different_repository_does_not_match() {
+        assert!(!same_repository(
+            "clmazzac/resume-store",
+            "clmazzac/hoskinator",
+        ));
     }
 }

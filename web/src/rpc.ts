@@ -426,6 +426,7 @@ export interface WorkspaceStatus {
   repository_ready: boolean;
   remote_url: string | null;
   applications_sheet: string | null;
+  default_repository_root: string;
 }
 
 export interface MergeOutcome {

@@ -74,14 +74,22 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
 
     println!("Hoskinator is listening on http://{address}{RPC_PATH}");
     println!("Store: {}", home.store_path().display());
-    axum::serve(listener, router(store, config.resume_repo)?)
+    let default_repository_root = home.repositories_dir();
+    axum::serve(
+        listener,
+        router(store, config.resume_repo, default_repository_root)?,
+    )
         .with_graceful_shutdown(interrupted())
         .await
         .map_err(ServeError::Serve)
 }
 
 /// The daemon's routes, with every request passing the authenticator.
-fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, ServeError> {
+fn router(
+    store: Arc<Store>,
+    resume_repo: Option<PathBuf>,
+    default_repository_root: PathBuf,
+) -> Result<Router, ServeError> {
     // Shared so that switching repositories takes effect for every service immediately, rather
     // than only on the next start.
     let active = ActiveRepository::new(resume_repo);
@@ -96,7 +104,7 @@ fn router(store: Arc<Store>, resume_repo: Option<PathBuf>) -> Result<Router, Ser
     module.merge(ResumeApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(RenderApi::new(active.clone()).into_rpc())?;
     module.merge(ApplicationApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
-    module.merge(WorkspaceApi::new(active.clone()).into_rpc())?;
+    module.merge(WorkspaceApi::new(active.clone(), default_repository_root).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(active)).into_rpc())?;
 
     Ok(Router::new()
@@ -198,7 +206,11 @@ mod tests {
         let store = Store::open(&dir.path().join("store").join("hoskinator.db"))
             .await
             .unwrap();
-        (dir, router(Arc::new(store), None).unwrap())
+        let default_repository_root = dir.path().join("repositories");
+        (
+            dir,
+            router(Arc::new(store), None, default_repository_root).unwrap(),
+        )
     }
 
     async fn repository_router() -> (TempDir, Router) {
@@ -207,7 +219,11 @@ mod tests {
             .await
             .unwrap();
         let repo = dir.path().join("resume");
-        (dir, router(Arc::new(store), Some(repo)).unwrap())
+        let default_repository_root = dir.path().join("repositories");
+        (
+            dir,
+            router(Arc::new(store), Some(repo), default_repository_root).unwrap(),
+        )
     }
 
     async fn call(router: Router, request: &str) -> serde_json::Value {

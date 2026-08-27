@@ -1251,7 +1251,8 @@ impl ApplicationApi {
             .get()
             .ok_or_else(applications_unavailable)?;
         tokio::task::spawn_blocking(move || {
-            workspace::status(Some(&path), None)
+            // Only remote_url is read below; default_repository_root plays no part in scoping.
+            workspace::status(Some(&path), None, Path::new(""))
                 .remote_url
                 .and_then(|url| workspace::repository_slug(&url))
         })
@@ -1305,11 +1306,15 @@ impl ApplicationRpcServer for ApplicationApi {
 /// Serves repository setup, the GitHub account behind it, and the linked application sheet.
 pub struct WorkspaceApi {
     repository_path: ActiveRepository,
+    default_repository_root: PathBuf,
 }
 
 impl WorkspaceApi {
-    pub fn new(repository_path: ActiveRepository) -> Self {
-        Self { repository_path }
+    pub fn new(repository_path: ActiveRepository, default_repository_root: PathBuf) -> Self {
+        Self {
+            repository_path,
+            default_repository_root,
+        }
     }
 
     /// Remembers a newly set-up repository, so the next start finds it.
@@ -1332,10 +1337,12 @@ impl WorkspaceApi {
 impl WorkspaceRpcServer for WorkspaceApi {
     async fn workspace_status(&self) -> RpcResult<WorkspaceStatus> {
         let path = self.repository_path.get();
+        let default_repository_root = self.default_repository_root.clone();
         workspace_blocking(move || {
             Ok(workspace::status(
                 path.as_deref(),
                 WorkspaceApi::linked_sheet().as_deref(),
+                &default_repository_root,
             ))
         })
         .await
@@ -1351,6 +1358,7 @@ impl WorkspaceRpcServer for WorkspaceApi {
         destination: PathBuf,
     ) -> RpcResult<WorkspaceStatus> {
         let active = self.repository_path.clone();
+        let default_repository_root = self.default_repository_root.clone();
         workspace_blocking(move || {
             let path = workspace::create_github(&name, &destination)?;
             WorkspaceApi::adopt(&path)?;
@@ -1358,6 +1366,7 @@ impl WorkspaceRpcServer for WorkspaceApi {
             Ok(workspace::status(
                 Some(&path),
                 WorkspaceApi::linked_sheet().as_deref(),
+                &default_repository_root,
             ))
         })
         .await
@@ -1369,6 +1378,7 @@ impl WorkspaceRpcServer for WorkspaceApi {
         destination: PathBuf,
     ) -> RpcResult<WorkspaceStatus> {
         let active = self.repository_path.clone();
+        let default_repository_root = self.default_repository_root.clone();
         workspace_blocking(move || {
             let path = workspace::connect_github(&source, &destination)?;
             WorkspaceApi::adopt(&path)?;
@@ -1376,6 +1386,7 @@ impl WorkspaceRpcServer for WorkspaceApi {
             Ok(workspace::status(
                 Some(&path),
                 WorkspaceApi::linked_sheet().as_deref(),
+                &default_repository_root,
             ))
         })
         .await
@@ -1399,12 +1410,17 @@ impl WorkspaceRpcServer for WorkspaceApi {
 
     async fn workspace_link_sheet(&self, link: String) -> RpcResult<WorkspaceStatus> {
         let path = self.repository_path.get();
+        let default_repository_root = self.default_repository_root.clone();
         sheet_blocking(move || {
             let id = sheets::id_from(&link)?;
             if let Some(config) = hoskinator_core::home::config_file_path() {
                 sheets::remember(&config, &id)?;
             }
-            Ok(workspace::status(path.as_deref(), Some(&id)))
+            Ok(workspace::status(
+                path.as_deref(),
+                Some(&id),
+                &default_repository_root,
+            ))
         })
         .await
     }

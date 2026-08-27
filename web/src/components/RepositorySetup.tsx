@@ -20,9 +20,8 @@ import {
 } from "@/rpc";
 
 /// Where a new repository is cloned, unless the user says otherwise.
-function suggestedPath(name: string): string {
-  const home = "/home/cam";
-  return `${home}/${name || "resumes"}`;
+function suggestedPath(root: string, name: string): string {
+  return `${root}/${name || "resumes"}`;
 }
 
 export default function RepositorySetup({
@@ -111,7 +110,7 @@ export default function RepositorySetup({
               spellCheck={false}
             />
             <p className="font-mono text-[11px] text-muted-foreground">
-              {suggestedPath(name)}
+              {suggestedPath(status.default_repository_root, name)}
             </p>
           </div>
           <Button
@@ -120,7 +119,10 @@ export default function RepositorySetup({
             onClick={() =>
               attempt(
                 "create",
-                createGithubRepository(name.trim(), suggestedPath(name.trim())),
+                createGithubRepository(
+                  name.trim(),
+                  suggestedPath(status.default_repository_root, name.trim()),
+                ),
               )
             }
           >
@@ -176,7 +178,7 @@ export default function RepositorySetup({
               />
             )}
             <p className="font-mono text-[11px] text-muted-foreground">
-              {suggestedPath(source.split("/").pop() ?? "")}
+              {suggestedPath(status.default_repository_root, source.split("/").pop() ?? "")}
             </p>
           </div>
           <Button
@@ -188,7 +190,10 @@ export default function RepositorySetup({
                 "connect",
                 connectRepository(
                   source.trim(),
-                  suggestedPath(source.trim().split("/").pop() ?? "resumes"),
+                  suggestedPath(
+                    status.default_repository_root,
+                    source.trim().split("/").pop() ?? "resumes",
+                  ),
                 ),
               )
             }
