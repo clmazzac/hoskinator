@@ -24,25 +24,20 @@ type View = "menu" | "new-resume" | "open-existing";
 function Tile({
   icon,
   title,
-  description,
   onClick,
 }: {
   icon: React.ReactNode;
   title: string;
-  description: string;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <span className="mt-0.5 text-muted-foreground">{icon}</span>
-      <span className="grid gap-0.5">
-        <span className="text-sm font-medium">{title}</span>
-        <span className="text-xs text-muted-foreground">{description}</span>
-      </span>
+      <span className="text-muted-foreground">{icon}</span>
+      <span className="text-sm font-medium">{title}</span>
     </button>
   );
 }
@@ -160,19 +155,16 @@ export default function LaunchDialog({
             <Tile
               icon={<GitBranch className="size-4" />}
               title="New resume"
-              description="Branch for a kind of role, then tailor it as you apply."
               onClick={() => setView("new-resume")}
             />
             <Tile
               icon={<PackagePlus className="size-4" />}
               title="New application"
-              description="Add a blank row to the tracker — fill it in from there."
               onClick={createApplicationDraft}
             />
             <Tile
               icon={<FolderOpen className="size-4" />}
               title="Open existing"
-              description="Jump into a resume you've already started."
               onClick={() => setView("open-existing")}
             />
           </div>
