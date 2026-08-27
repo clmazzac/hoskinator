@@ -231,6 +231,58 @@ export function deleteJobDescription(id: number): Promise<boolean> {
   return call("jd.delete", [id]);
 }
 
+/** A candidate keyword extracted from a JD, and how much it counts for. */
+export interface Keyword {
+  term: string;
+  weight: number;
+}
+
+export type WritingNoteKind = "unquantified" | "weak_opener";
+
+/** A resume line that reads as a bullet, flagged for a specific writing issue. */
+export interface WritingNote {
+  line: string;
+  kind: WritingNoteKind;
+}
+
+/** The deterministic half of the tailoring panel: keyword overlap only, no AI involved. */
+export interface MatchReport {
+  score: number;
+  matched: Keyword[];
+  missing: Keyword[];
+  writing_notes: WritingNote[];
+}
+
+export function matchJobDescription(id: number): Promise<MatchReport> {
+  return call("jd.match", [id]);
+}
+
+export interface Score {
+  score: number;
+  reason: string;
+}
+
+export interface Suggestion {
+  on: string;
+  suggestion: string;
+  why: string;
+}
+
+/** The AI-judged half of the tailoring panel: relevance, tone, flow, and rewrite suggestions. */
+export interface Assessment {
+  relevance: Score;
+  tone: Score;
+  flow: Score;
+  suggestions: Suggestion[];
+}
+
+/** Mirrors `rpc::AI_UNCONFIGURED` — the `ai` feature is built but no API key is set. */
+export const AI_UNCONFIGURED_CODE = -32036;
+
+export function assessResume(jdId: number): Promise<Assessment> {
+  return call("ai.assess", [jdId]);
+}
+
 export interface Head { branch: string | null; commit_id: string | null }
 export interface Branch { name: string; commit_id: string | null; is_head: boolean }
 export interface RepositoryState { head: Head | null; branches: Branch[] }

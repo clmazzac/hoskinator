@@ -71,3 +71,15 @@ defaulting to `claude-haiku-4-5-20251001` — cheap and fast fits a per-panel ba
 than a stronger model. `Config::from_env` returns `None` rather than erroring when no key is set;
 `ai.assess` turns that into the dedicated `AI_UNCONFIGURED` JSON-RPC code the Assessment panel
 matches on to show its "not configured" state, rather than a generic failure.
+
+## The panel lives in a second, outer resizable split
+
+The three-column editor (Slice 9) is one horizontal `ResizablePanelGroup`. The tailoring panel adds
+a second, outer `ResizablePanelGroup` in the vertical orientation, wrapping that three-column group
+as its top pane and the tailoring panel as its bottom pane — a top/bottom split around a left/right
+one, each with its own saved layout size. Collapse follows the render panel's existing pattern
+(`collapsible`, `collapsedSize={0}`, an expand button that appears in the freed space).
+
+Within the panel, Match and Assessment are independent `Collapsible` sections rather than one
+collapse toggle for the whole panel — "hide the thing I don't need right now" reads as a per-section
+action (hide Assessment while unkeyed, keep Match), not an all-or-nothing one.
