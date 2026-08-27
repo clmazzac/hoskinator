@@ -1,6 +1,13 @@
 //! Hoskinator's optional AI layer.
 //!
-//! Depends on `hoskinator-core`; the reverse never happens (ADR-0005). Reads no API key and opens
-//! no connection.
-//!
-//! Empty until Slice 11 (#12) fills it.
+//! Depends on `hoskinator-core`; the reverse never happens (ADR-0005). Built behind the `ai`
+//! cargo feature on the `hoskinator` binary. Absent an `ANTHROPIC_API_KEY`, `Config::from_env`
+//! returns `None` and the caller reports AI as unconfigured rather than erroring.
+
+pub mod assess;
+pub mod config;
+pub mod transport;
+
+pub use assess::{AssessError, Assessment, Score, Suggestion, assess};
+pub use config::Config;
+pub use transport::{AnthropicTransport, Transport, TransportError};

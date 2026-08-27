@@ -56,3 +56,18 @@ built or isn't keyed, the Assessment panel says so in place rather than disappea
 product visibly gestures at what AI adds, rather than hiding it until someone stumbles onto a key.
 The one-way `ai` → `core` dependency and the cargo feature flag (ADR-0005) are unchanged; only the
 UI's *hide-when-absent* convention is overridden for this feature.
+
+## `ai.assess`'s transport, config, and error shape
+
+`hoskinator_ai::Transport` is a one-method trait (`complete(model, prompt) -> String`) rather than
+modeling Anthropic's Messages API request/response shape at the trait boundary. `AnthropicTransport`
+is the real `reqwest`-backed implementation; tests use a stub that returns a canned string and
+records the prompt it was given, so `assess`'s orchestration (does the resume and JD both reach the
+model, does a well-formed and a fenced reply both parse) is asserted without a network call, per the
+PRD's testing decisions.
+
+`Config::from_env` reads `ANTHROPIC_API_KEY` and an optional `HOSKINATOR_AI_ASSESS_MODEL` override,
+defaulting to `claude-haiku-4-5-20251001` — cheap and fast fits a per-panel background call better
+than a stronger model. `Config::from_env` returns `None` rather than erroring when no key is set;
+`ai.assess` turns that into the dedicated `AI_UNCONFIGURED` JSON-RPC code the Assessment panel
+matches on to show its "not configured" state, rather than a generic failure.
