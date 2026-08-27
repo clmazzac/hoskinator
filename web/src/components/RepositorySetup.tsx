@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 import { Check, FolderGit2, Loader2, Plus, Link2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   connectRepository,
   createGithubRepository,
@@ -134,25 +135,37 @@ export default function RepositorySetup({
 
         <Card title="Connect an existing one">
           <p className="text-sm text-muted-foreground">
-            Pick a repository you already keep resumes in.
+            Pick a repository you use for Hoskinator.
           </p>
           <div className="mt-4 grid gap-2">
             <Label htmlFor="repo-source" className="text-xs">
               Repository
             </Label>
             {owned && owned.length > 0 ? (
-              <Select value={source} onValueChange={(next) => next && setSource(next)}>
-                <SelectTrigger id="repo-source">
-                  <SelectValue placeholder="Choose a repository" />
-                </SelectTrigger>
-                <SelectContent>
-                  {owned.map((repository) => (
-                    <SelectItem key={repository} value={repository}>
-                      {repository}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Combobox
+                items={owned}
+                value={source || null}
+                onValueChange={(next) => setSource(next ?? "")}
+              >
+                <ComboboxInput id="repo-source" placeholder="Search your repositories…" />
+                <ComboboxContent>
+                  <ComboboxEmpty>No matching repositories.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(repository: string) => {
+                      const [owner, name] = repository.split("/");
+                      return (
+                        <ComboboxItem key={repository} value={repository}>
+                          <FolderGit2 className="size-3.5 text-muted-foreground" />
+                          <span className="truncate">
+                            <span className="text-muted-foreground">{owner}/</span>
+                            <span className="font-medium">{name}</span>
+                          </span>
+                        </ComboboxItem>
+                      );
+                    }}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             ) : (
               <Input
                 id="repo-source"
