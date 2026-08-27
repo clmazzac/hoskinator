@@ -269,6 +269,35 @@ pub fn place_bullet(
     apply(repository_path, &document, &[patch], profile)
 }
 
+/// Builds the patch adding `section: value` under `cv.sections`, creating `sections:` if the
+/// resume has none.
+fn place_in_sections<'a>(
+    document: &yamlpath::Document,
+    sections_route: yamlpath::Route<'a>,
+    section: &'a str,
+    value: yaml_serde::Value,
+) -> yamlpatch::Patch<'a> {
+    if document.query_exists(&sections_route) {
+        yamlpatch::Patch {
+            route: sections_route,
+            operation: yamlpatch::Op::Add {
+                key: section.to_string(),
+                value,
+            },
+        }
+    } else {
+        let mut sections = yaml_serde::Mapping::new();
+        sections.insert(yaml_serde::Value::String(section.to_string()), value);
+        yamlpatch::Patch {
+            route: yamlpath::Route::default().with_key(CV_KEY),
+            operation: yamlpatch::Op::Add {
+                key: SECTIONS_KEY.to_string(),
+                value: yaml_serde::Value::Mapping(sections),
+            },
+        }
+    }
+}
+
 /// Places an Entry's fields at the end of a section, creating the section if the resume has none.
 ///
 /// Drop order is resume order: an Entry lands after the ones already placed. Its fields are copied
@@ -299,28 +328,7 @@ pub fn place_entry(
     // mapping. Replacing the section afterwards re-emits it as a block sequence, which is what a
     // hand-editable file wants and what later field writes need.
     let entries = yaml_serde::Value::Sequence(vec![entry]);
-    let create = if document.query_exists(&sections_route) {
-        yamlpatch::Patch {
-            route: sections_route,
-            operation: yamlpatch::Op::Add {
-                key: section.to_string(),
-                value: entries.clone(),
-            },
-        }
-    } else {
-        let mut sections = yaml_serde::Mapping::new();
-        sections.insert(
-            yaml_serde::Value::String(section.to_string()),
-            entries.clone(),
-        );
-        yamlpatch::Patch {
-            route: yamlpath::Route::default().with_key(CV_KEY),
-            operation: yamlpatch::Op::Add {
-                key: SECTIONS_KEY.to_string(),
-                value: yaml_serde::Value::Mapping(sections),
-            },
-        }
-    };
+    let create = place_in_sections(&document, sections_route, section, entries.clone());
     let as_block = yamlpatch::Patch {
         route: section_route,
         operation: yamlpatch::Op::Replace(entries),
@@ -478,25 +486,7 @@ pub fn place_section(
     }
 
     let empty = yaml_serde::Value::Sequence(Vec::new());
-    let patch = if document.query_exists(&sections_route) {
-        yamlpatch::Patch {
-            route: sections_route,
-            operation: yamlpatch::Op::Add {
-                key: section.to_string(),
-                value: empty,
-            },
-        }
-    } else {
-        let mut sections = yaml_serde::Mapping::new();
-        sections.insert(yaml_serde::Value::String(section.to_string()), empty);
-        yamlpatch::Patch {
-            route: yamlpath::Route::default().with_key(CV_KEY),
-            operation: yamlpatch::Op::Add {
-                key: SECTIONS_KEY.to_string(),
-                value: yaml_serde::Value::Mapping(sections),
-            },
-        }
-    };
+    let patch = place_in_sections(&document, sections_route, section, empty);
 
     apply(repository_path, &document, &[patch], profile)
 }
