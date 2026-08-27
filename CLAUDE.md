@@ -96,6 +96,7 @@ Decisions that apply across the whole repo, newest last. Decisions scoped to one
 | Resume YAML (`resume.yaml`) | `docs/decisions/resume.md` |
 | Rendering (rendercv) | `docs/decisions/render.md` |
 | Workspace (branches, GitHub, applications) | `docs/decisions/workspace.md` |
+| Tailoring (resume-vs-JD scoring) | `docs/decisions/tailoring.md` |
 
 ### Layout: Cargo workspace at the repo root (Slice 1, #2)
 
