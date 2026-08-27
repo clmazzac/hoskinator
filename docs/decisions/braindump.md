@@ -37,3 +37,11 @@ seam.
 
 `ai.suggest_bullets` requires a non-blank braindump and answers `BRAINDUMP_EMPTY` otherwise, rather
 than calling Claude with nothing to work from and getting back invention instead of drafts.
+
+## The suggestion UI has no copy explaining itself
+
+"Suggest bullets" is a plain button under the braindump field, hidden until that field holds text.
+No onboarding text, no "AI-powered" label. A drafted bullet shows its own grounding quote instead
+of a disclaimer; accepting one is a single "Add" click, and it becomes a normal Bullet — nothing
+about it is marked as AI-originated afterward, the same way a Variant carries no note about who
+typed it.
