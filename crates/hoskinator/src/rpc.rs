@@ -109,6 +109,9 @@ pub const AI_FAILED: i32 = -32037;
 /// The `ai` feature is compiled in, but the entry has no braindump to draft bullets from.
 #[cfg(feature = "ai")]
 pub const BRAINDUMP_EMPTY: i32 = -32038;
+/// The `ai` feature is compiled in, but reading or writing the configuration file failed.
+#[cfg(feature = "ai")]
+pub const CONFIG_IO: i32 = -32039;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -249,6 +252,14 @@ pub trait AiRpc {
     /// Drafts bullets from an entry's braindump, skipping wordings it already has.
     #[method(name = "ai.suggest_bullets")]
     async fn ai_suggest_bullets(&self, entry_id: i64) -> RpcResult<Vec<DraftBullet>>;
+
+    /// Whether a key is available, from Hoskinator's own settings or `ANTHROPIC_API_KEY`.
+    #[method(name = "ai.status")]
+    async fn ai_status(&self) -> RpcResult<bool>;
+
+    /// Writes or clears the configured Anthropic key, and answers whether AI is now available.
+    #[method(name = "ai.set_api_key")]
+    async fn ai_set_api_key(&self, key: Option<String>) -> RpcResult<bool>;
 }
 
 #[rpc(server, client)]
@@ -1162,7 +1173,9 @@ impl AiRpcServer for AiApi {
         .map_err(|error| ErrorObjectOwned::owned(RESUME_IO, error.to_string(), None::<()>))?
         .map_err(resume_rpc_error)?;
 
-        let config = hoskinator_ai::Config::from_env().ok_or_else(ai_unconfigured)?;
+        let configured_key = configured_anthropic_key()?;
+        let config = hoskinator_ai::Config::resolve(configured_key.as_deref())
+            .ok_or_else(ai_unconfigured)?;
         let transport = hoskinator_ai::AnthropicTransport::new(config.api_key);
         hoskinator_ai::assess(
             &transport,
@@ -1204,12 +1217,35 @@ impl AiRpcServer for AiApi {
             .map(|variant| variant.text)
             .collect::<Vec<_>>();
 
-        let config = hoskinator_ai::Config::from_env().ok_or_else(ai_unconfigured)?;
+        let configured_key = configured_anthropic_key()?;
+        let config = hoskinator_ai::Config::resolve(configured_key.as_deref())
+            .ok_or_else(ai_unconfigured)?;
         let transport = hoskinator_ai::AnthropicTransport::new(config.api_key);
         hoskinator_ai::suggest_bullets(&transport, &config.suggest_model, &braindump, &existing)
             .await
             .map_err(suggest_rpc_error)
     }
+
+    async fn ai_status(&self) -> RpcResult<bool> {
+        let configured_key = configured_anthropic_key()?;
+        Ok(hoskinator_ai::Config::resolve(configured_key.as_deref()).is_some())
+    }
+
+    async fn ai_set_api_key(&self, key: Option<String>) -> RpcResult<bool> {
+        let path = hoskinator_core::home::config_file_path().ok_or_else(config_unavailable)?;
+        let key = key.filter(|key| !key.trim().is_empty());
+        hoskinator_core::config::remember_anthropic_api_key(&path, key.as_deref())
+            .map_err(config_rpc_error)?;
+        self.ai_status().await
+    }
+}
+
+/// Reads `anthropic_api_key` fresh from the config file.
+#[cfg(feature = "ai")]
+fn configured_anthropic_key() -> RpcResult<Option<String>> {
+    hoskinator_core::home::Home::config()
+        .map(|config| config.anthropic_api_key)
+        .map_err(config_rpc_error)
 }
 
 /// Maps a [`StoreError`] onto the code its variant belongs to.
@@ -1351,6 +1387,20 @@ fn braindump_empty() -> ErrorObjectOwned {
 #[cfg(feature = "ai")]
 fn suggest_rpc_error(error: hoskinator_ai::SuggestError) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(AI_FAILED, source_message(&error), None::<()>)
+}
+
+#[cfg(feature = "ai")]
+fn config_unavailable() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        CONFIG_IO,
+        "no platform configuration directory is available",
+        None::<()>,
+    )
+}
+
+#[cfg(feature = "ai")]
+fn config_rpc_error(error: hoskinator_core::config::ConfigError) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(CONFIG_IO, source_message(&error), None::<()>)
 }
 
 fn section_not_found(section: &str) -> ErrorObjectOwned {

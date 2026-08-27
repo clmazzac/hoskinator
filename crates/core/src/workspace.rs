@@ -298,25 +298,12 @@ fn run(program: &str, args: &[&str], directory: &Path) -> Result<String, Workspa
 
 /// Writes `resume_repo` into the config file, keeping any `home` already set.
 pub fn remember_repository(config_path: &Path, repository: &Path) -> Result<(), WorkspaceError> {
-    let existing = std::fs::read_to_string(config_path).unwrap_or_default();
-    let kept: Vec<&str> = existing
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("resume_repo"))
-        .collect();
-
-    let mut written = kept.join("\n");
-    if !written.is_empty() && !written.ends_with('\n') {
-        written.push('\n');
-    }
-    written.push_str(&format!(
-        "resume_repo = \"{}\"\n",
-        repository.to_string_lossy()
-    ));
-
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).map_err(WorkspaceError::Config)?;
-    }
-    std::fs::write(config_path, written).map_err(WorkspaceError::Config)
+    crate::config::remember_key(
+        config_path,
+        "resume_repo",
+        Some(&repository.to_string_lossy()),
+    )
+    .map_err(WorkspaceError::Config)
 }
 
 /// The `owner/name` a GitHub remote URL names, or `None` if it doesn't look like one. Used to

@@ -4,6 +4,7 @@ import {
   FilePlus2,
   GitBranch,
   Home,
+  KeyRound,
   Moon,
   Redo2,
   Sheet,
@@ -11,6 +12,7 @@ import {
   Undo2,
 } from "lucide-react";
 
+import ApiKeyDialog from "@/components/ApiKeyDialog";
 import NewEntryDialog from "@/components/NewEntryDialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,6 +57,7 @@ export default function MenuBar({
   const [branches, setBranches] = useState<Branch[]>([]);
   const [sheet, setSheet] = useState<string | null>(null);
   const [creatingEntry, setCreatingEntry] = useState(false);
+  const [settingApiKey, setSettingApiKey] = useState(false);
 
   useEffect(() => {
     resumeThemes().then(setStyles, () => setStyles([]));
@@ -231,6 +234,18 @@ export default function MenuBar({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-6"
+        onClick={() => setSettingApiKey(true)}
+        aria-label="Anthropic API key"
+        title="Anthropic API key"
+      >
+        <KeyRound className="size-3.5" />
+      </Button>
+      <ApiKeyDialog open={settingApiKey} onOpenChange={setSettingApiKey} />
 
       <Button
         variant="ghost"

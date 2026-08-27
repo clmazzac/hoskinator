@@ -14,13 +14,15 @@ pub struct Config {
 }
 
 impl Config {
-    /// Reads `ANTHROPIC_API_KEY` and optional `HOSKINATOR_AI_ASSESS_MODEL` /
-    /// `HOSKINATOR_AI_SUGGEST_MODEL` overrides from the environment. `None` when no key is set —
-    /// the caller reports AI as unconfigured rather than erroring.
-    pub fn from_env() -> Option<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .ok()
-            .filter(|k| !k.is_empty())?;
+    /// Resolves the API key from `configured_key` (Hoskinator's own settings) if given, else
+    /// `ANTHROPIC_API_KEY`; and `HOSKINATOR_AI_ASSESS_MODEL` / `HOSKINATOR_AI_SUGGEST_MODEL`
+    /// overrides from the environment. `None` when no key is found either way — the caller
+    /// reports AI as unconfigured rather than erroring.
+    pub fn resolve(configured_key: Option<&str>) -> Option<Self> {
+        let api_key = configured_key
+            .map(str::to_owned)
+            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+            .filter(|key| !key.is_empty())?;
         let assess_model = std::env::var("HOSKINATOR_AI_ASSESS_MODEL")
             .unwrap_or_else(|_| DEFAULT_ASSESS_MODEL.to_string());
         let suggest_model = std::env::var("HOSKINATOR_AI_SUGGEST_MODEL")
