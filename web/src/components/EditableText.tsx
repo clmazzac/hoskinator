@@ -9,12 +9,14 @@ export default function EditableText({
   placeholder,
   className,
   multiline = false,
+  title,
 }: {
   value: string;
   onCommit: (next: string) => void;
   placeholder?: string;
   className?: string;
   multiline?: boolean;
+  title?: string;
 }) {
   const [draft, setDraft] = useState(value);
   const abandoned = useRef(false);
@@ -32,6 +34,7 @@ export default function EditableText({
   const shared = {
     value: draft,
     placeholder,
+    title,
     spellCheck: false,
     onChange: (
       event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
