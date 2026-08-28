@@ -106,6 +106,14 @@ function useLazy<T>(open: boolean, load: () => Promise<T>) {
     load().then(setValue, (failure: Error) => setError(failure.message));
   }, [load]);
 
+  // A store edit elsewhere (a new entry, a moved bullet) leaves this stale otherwise: the
+  // effect below only fetches once, on the first open.
+  const invalidate = useCallback(() => {
+    setValue(null);
+    setError(null);
+  }, []);
+  useReloadOnHistory(invalidate);
+
   useEffect(() => {
     if (!open || value !== null || error !== null) return;
     reload();
