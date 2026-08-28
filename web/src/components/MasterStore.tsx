@@ -12,6 +12,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  ELEMENT_FIELDS,
   ENTRY_FIELDS,
   TEXT_FIELD,
   carriesBullets,
@@ -265,15 +266,17 @@ function AddBulletRow({ entryId, onAdded }: { entryId: number; onAdded: () => vo
   );
 }
 
-// A one-line entry keeps its elements in one comma-separated string. Each is shown as its own
-// row so it drags and edits like a Bullet; all three gestures rewrite the string.
+// An ELEMENT_FIELDS field keeps its elements in one comma-separated string. Each is shown as its
+// own row so it drags and edits like a Bullet; all three gestures rewrite the string.
 function ElementNode({
   entry,
+  field,
   elements,
   index,
   onEdited,
 }: {
   entry: Entry;
+  field: string;
   elements: string[];
   index: number;
   onEdited: () => void;
@@ -285,7 +288,7 @@ function ElementNode({
       () =>
         updateEntry(entry.id, {
           ...held,
-          details: joinElements(next.filter(Boolean)),
+          [field]: joinElements(next.filter(Boolean)),
         }),
       () => updateEntry(entry.id, held),
     ).then(onEdited);
@@ -306,14 +309,16 @@ function ElementNode({
   );
 }
 
-// A blank row that always sits at the end of a one-line entry's elements, for typing a new one
-// by hand — mirrors AddBulletRow, but rewrites the comma-separated `details` string instead.
+// A blank row that always sits at the end of an ELEMENT_FIELDS field's elements, for typing a new
+// one by hand — mirrors AddBulletRow, but rewrites the comma-separated string instead.
 function AddElementRow({
   entry,
+  field,
   elements,
   onEdited,
 }: {
   entry: Entry;
+  field: string;
   elements: string[];
   onEdited: () => void;
 }) {
@@ -335,7 +340,7 @@ function AddElementRow({
             () =>
               updateEntry(entry.id, {
                 ...held,
-                details: joinElements([...elements, trimmed]),
+                [field]: joinElements([...elements, trimmed]),
               }),
             () => updateEntry(entry.id, held),
           ).then(() => {
@@ -375,7 +380,7 @@ function EntryFields({ entry, onEdited }: { entry: Entry; onEdited: () => void }
   return (
     <div className="grid gap-0.5 py-1 pr-2 pl-12">
       {names
-        .filter((name) => !(entry.entry_type === "one-line" && name === "details"))
+        .filter((name) => name !== ELEMENT_FIELDS[entry.entry_type])
         .map((name) => {
         const value = entry.entry_type === "text" ? entry.fields : held[name];
         const written = Array.isArray(value)
@@ -534,11 +539,11 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
   const hasBullets = carriesBullets(entry.entry_type);
   const load = useCallback(() => listBullets(entry.id), [entry.id]);
   const { value: bullets, error, reload } = useLazy<Bullet[]>(open && hasBullets, load);
-  const details = ((entry.fields ?? {}) as Record<string, unknown>).details;
-  const elements =
-    entry.entry_type === "one-line" && typeof details === "string"
-      ? splitElements(details)
-      : [];
+  const elementField = ELEMENT_FIELDS[entry.entry_type];
+  const elementValue = elementField
+    ? ((entry.fields ?? {}) as Record<string, unknown>)[elementField]
+    : undefined;
+  const elements = typeof elementValue === "string" ? splitElements(elementValue) : [];
 
   const remove = async () => {
     setBusy(true);
@@ -593,17 +598,19 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
         <EntryFields entry={entry} onEdited={onEdited} />
         {hasBullets && <BraindumpEditor entry={entry} onEdited={onEdited} />}
         {hasBullets && <SuggestBullets entry={entry} onAdded={reload} />}
-        {elements.map((_, index) => (
-          <ElementNode
-            key={index}
-            entry={entry}
-            elements={elements}
-            index={index}
-            onEdited={onEdited}
-          />
-        ))}
-        {entry.entry_type === "one-line" && (
-          <AddElementRow entry={entry} elements={elements} onEdited={onEdited} />
+        {elementField &&
+          elements.map((_, index) => (
+            <ElementNode
+              key={index}
+              entry={entry}
+              field={elementField}
+              elements={elements}
+              index={index}
+              onEdited={onEdited}
+            />
+          ))}
+        {elementField && (
+          <AddElementRow entry={entry} field={elementField} elements={elements} onEdited={onEdited} />
         )}
         {error && <Note>{error}</Note>}
         {hasBullets && bullets?.length === 0 && <Note>No bullets.</Note>}

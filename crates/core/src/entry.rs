@@ -66,6 +66,8 @@ pub struct EducationFields {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub summary: Option<String>,
+    /// Comma-separated, matching `OneLineFields::details`.
+    pub coursework: Option<String>,
 }
 
 /// A rendercv `publication` entry.
@@ -550,6 +552,19 @@ mod tests {
 
         assert_eq!(fields.start_date, None);
         assert_eq!(fields.summary, None);
+    }
+
+    #[test]
+    fn an_education_entry_carries_coursework() {
+        let EntryFields::Education(fields) = EntryFields::parse(
+            EntryType::Education,
+            json!({ "institution": "Cornell", "area": "CS", "coursework": "Algorithms, OS" }),
+        )
+        .unwrap() else {
+            panic!("expected education fields");
+        };
+
+        assert_eq!(fields.coursework.as_deref(), Some("Algorithms, OS"));
     }
 
     #[test]
