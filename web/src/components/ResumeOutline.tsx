@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { BookmarkPlus, ChevronRight, Minus } from "lucide-react";
+import { BookmarkPlus, ChevronRight } from "lucide-react";
 
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import RemoveButton from "@/components/RemoveButton";
 import SaveToBank from "@/components/SaveToBank";
 import { entryLabel } from "@/entryFields";
 import {
@@ -122,29 +123,6 @@ function updateEntry(
 ): ResumeSection[] {
   return updateEntries(sections, section, (entries) =>
     entries.map((entry) => (entry.index === index ? update(entry) : entry)),
-  );
-}
-
-function RemoveButton({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-    >
-      <Minus className="size-3" />
-    </button>
   );
 }
 
