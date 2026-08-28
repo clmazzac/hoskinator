@@ -11,6 +11,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::store::schema::application as application_table;
+use crate::store::schema::job_description as job_description_table;
 use crate::store::{Store, StoreError};
 
 /// Where an application has got to.
@@ -41,6 +42,7 @@ pub struct Application {
 /// The fields an application is created or updated with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Insertable, AsChangeset)]
 #[diesel(table_name = application_table)]
+#[diesel(treat_none_as_null = true)]
 pub struct NewApplication {
     pub company: String,
     pub position: String,
@@ -62,11 +64,15 @@ impl Store {
         let row = application.clone();
         let repository = repository.to_string();
         self.with_connection(move |connection| {
-            diesel::insert_into(application_table::table)
+            let created = diesel::insert_into(application_table::table)
                 .values((application_table::repository.eq(repository), row))
                 .returning(Application::as_returning())
-                .get_result(connection)
-                .map_err(StoreError::WriteApplication)
+                .get_result::<Application>(connection)
+                .map_err(StoreError::WriteApplication)?;
+
+            sync_job_description(connection, &created).map_err(StoreError::WriteApplication)?;
+
+            Ok(created)
         })
         .await
     }
@@ -93,11 +99,15 @@ impl Store {
     ) -> Result<Application, StoreError> {
         let row = application.clone();
         self.with_connection(move |connection| {
-            diesel::update(application_table::table.find(id))
+            let updated = diesel::update(application_table::table.find(id))
                 .set(row)
                 .returning(Application::as_returning())
-                .get_result(connection)
-                .map_err(StoreError::WriteApplication)
+                .get_result::<Application>(connection)
+                .map_err(StoreError::WriteApplication)?;
+
+            sync_job_description(connection, &updated).map_err(StoreError::WriteApplication)?;
+
+            Ok(updated)
         })
         .await
     }
@@ -112,6 +122,58 @@ impl Store {
         })
         .await
     }
+}
+
+/// Keeps the Job Description an application's `jd_text` implies in step with it: created when
+/// pasted, updated as it or the company/position change, removed once cleared. `ON DELETE
+/// CASCADE` (migration 0011) handles the application itself being deleted.
+fn sync_job_description(
+    connection: &mut SqliteConnection,
+    application: &Application,
+) -> QueryResult<()> {
+    let linked: Option<i64> = job_description_table::table
+        .filter(job_description_table::application_id.eq(application.id))
+        .select(job_description_table::id)
+        .first(connection)
+        .optional()?;
+
+    let text = application
+        .jd_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+
+    match (linked, text) {
+        (Some(existing), None) => {
+            diesel::delete(job_description_table::table.find(existing)).execute(connection)?;
+        }
+        (Some(existing), Some(text)) => {
+            diesel::update(job_description_table::table.find(existing))
+                .set((
+                    job_description_table::title.eq(Some(format!(
+                        "{} — {}",
+                        application.company, application.position
+                    ))),
+                    job_description_table::text.eq(text),
+                ))
+                .execute(connection)?;
+        }
+        (None, Some(text)) => {
+            diesel::insert_into(job_description_table::table)
+                .values((
+                    job_description_table::application_id.eq(Some(application.id)),
+                    job_description_table::title.eq(Some(format!(
+                        "{} — {}",
+                        application.company, application.position
+                    ))),
+                    job_description_table::text.eq(text),
+                ))
+                .execute(connection)?;
+        }
+        (None, None) => {}
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -155,6 +217,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn updating_with_none_actually_clears_an_optional_field() {
+        let (_dir, store) = open_temp_store().await;
+
+        let created = store
+            .create_application(&sample("Acme"), "owner/one")
+            .await
+            .unwrap();
+        store
+            .update_application(
+                created.id,
+                &NewApplication {
+                    notes: Some("call back Tuesday".to_string()),
+                    ..sample("Acme")
+                },
+            )
+            .await
+            .unwrap();
+
+        let cleared = store
+            .update_application(created.id, &sample("Acme"))
+            .await
+            .unwrap();
+
+        assert_eq!(cleared.notes, None);
+    }
+
+    #[tokio::test]
     async fn an_application_is_scoped_to_the_repository_it_was_created_against() {
         let (_dir, store) = open_temp_store().await;
 
@@ -195,5 +284,95 @@ mod tests {
             new_repo.iter().map(|a| &a.company).collect::<Vec<_>>(),
             vec!["New Co"]
         );
+    }
+
+    fn with_jd(company: &str, jd_text: &str) -> NewApplication {
+        NewApplication {
+            jd_text: Some(jd_text.to_string()),
+            ..sample(company)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_posting_creates_a_linked_job_description() {
+        let (_dir, store) = open_temp_store().await;
+
+        let created = store
+            .create_application(&with_jd("Acme", "Build things."), "owner/one")
+            .await
+            .unwrap();
+
+        let jds = store.job_descriptions(None).await.unwrap();
+        assert_eq!(jds.len(), 1);
+        assert_eq!(jds[0].application_id, Some(created.id));
+        assert_eq!(jds[0].text, "Build things.");
+        assert_eq!(jds[0].title.as_deref(), Some("Acme — Engineer"));
+    }
+
+    #[tokio::test]
+    async fn no_posting_creates_no_job_description() {
+        let (_dir, store) = open_temp_store().await;
+
+        store
+            .create_application(&sample("Acme"), "owner/one")
+            .await
+            .unwrap();
+
+        assert!(store.job_descriptions(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn editing_the_posting_updates_the_same_job_description() {
+        let (_dir, store) = open_temp_store().await;
+
+        let created = store
+            .create_application(&with_jd("Acme", "Build things."), "owner/one")
+            .await
+            .unwrap();
+
+        store
+            .update_application(created.id, &with_jd("Acme Corp", "Build bigger things."))
+            .await
+            .unwrap();
+
+        let jds = store.job_descriptions(None).await.unwrap();
+        assert_eq!(
+            jds.len(),
+            1,
+            "editing should not add a second job description"
+        );
+        assert_eq!(jds[0].text, "Build bigger things.");
+        assert_eq!(jds[0].title.as_deref(), Some("Acme Corp — Engineer"));
+    }
+
+    #[tokio::test]
+    async fn clearing_the_posting_removes_the_linked_job_description() {
+        let (_dir, store) = open_temp_store().await;
+
+        let created = store
+            .create_application(&with_jd("Acme", "Build things."), "owner/one")
+            .await
+            .unwrap();
+
+        store
+            .update_application(created.id, &sample("Acme"))
+            .await
+            .unwrap();
+
+        assert!(store.job_descriptions(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_the_application_removes_its_linked_job_description() {
+        let (_dir, store) = open_temp_store().await;
+
+        let created = store
+            .create_application(&with_jd("Acme", "Build things."), "owner/one")
+            .await
+            .unwrap();
+
+        store.delete_application(created.id).await.unwrap();
+
+        assert!(store.job_descriptions(None).await.unwrap().is_empty());
     }
 }

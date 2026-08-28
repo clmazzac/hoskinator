@@ -24,6 +24,7 @@ diesel::table! {
         title -> Nullable<Text>,
         text -> Text,
         created_at -> Text,
+        application_id -> Nullable<BigInt>,
     }
 }
 

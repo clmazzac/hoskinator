@@ -14,6 +14,8 @@ export interface JobDescription {
   title: string | null;
   text: string;
   created_at: string;
+  /** The application this posting was pasted onto, if it came from one rather than jd.create. */
+  application_id: number | null;
 }
 
 export interface NewJobDescription {
