@@ -246,24 +246,44 @@ pub fn place_bullet(
     text: String,
     profile: &Profile,
 ) -> Result<(), ResumeError> {
-    let (_, document) = load(repository_path)?;
+    let (path, document) = load(repository_path)?;
     let entry_route = entry_route(section, entry_index);
     require(&document, &entry_route, section, entry_index)?;
 
     let highlights_route = entry_route.clone().with_key(HIGHLIGHTS_KEY);
+
+    // A single-item list an earlier write left inline (a key `Add`, same as an entry's fields —
+    // see `place_entry`) renders as a flow sequence, and yamlpatch refuses to `Append` into one.
+    // Reading the current list and always writing the whole thing back with `Replace` sidesteps
+    // that: `Replace` always re-emits a block sequence, so this heals a flow-style list left by
+    // an older write the same way it writes a fresh one.
+    let parsed: yaml_serde::Value =
+        yaml_serde::from_str(document.source()).map_err(|source| ResumeError::Decode {
+            path: path.clone(),
+            source,
+        })?;
+    let mut highlights: Vec<yaml_serde::Value> = parsed
+        .get(CV_KEY)
+        .and_then(|cv| cv.get(SECTIONS_KEY))
+        .and_then(|sections| sections.get(section))
+        .and_then(|entries| entries.get(entry_index))
+        .and_then(|entry| entry.get(HIGHLIGHTS_KEY))
+        .and_then(|value| value.as_sequence())
+        .cloned()
+        .unwrap_or_default();
+    highlights.push(yaml_serde::Value::String(text));
+
     let patch = if document.query_exists(&highlights_route) {
         yamlpatch::Patch {
             route: highlights_route,
-            operation: yamlpatch::Op::Append {
-                value: yaml_serde::Value::String(text),
-            },
+            operation: yamlpatch::Op::Replace(yaml_serde::Value::Sequence(highlights)),
         }
     } else {
         yamlpatch::Patch {
             route: entry_route,
             operation: yamlpatch::Op::Add {
                 key: HIGHLIGHTS_KEY.to_string(),
-                value: yaml_serde::Value::Sequence(vec![yaml_serde::Value::String(text)]),
+                value: yaml_serde::Value::Sequence(highlights),
             },
         }
     };
@@ -1305,6 +1325,23 @@ design:
         assert_eq!(outline[0].entries.len(), 2);
         assert_eq!(outline[0].entries[1].fields["company"], "Ravensmoor");
         assert_eq!(outline[0].entries[1].highlights, Vec::<String>::new());
+    }
+
+    #[test]
+    fn placing_a_second_wording_after_a_fresh_add_still_works() {
+        let dir = seeded(SAMPLE);
+        let profile = populated_profile();
+
+        // Entry 1 (Ravensmoor) has no `highlights:` yet, so the first call Adds it fresh, which
+        // renders inline — a second call used to fail trying to Append into that flow sequence.
+        place_bullet(dir.path(), "Experience", 1, "First one.".into(), &profile).unwrap();
+        place_bullet(dir.path(), "Experience", 1, "Second one.".into(), &profile).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(
+            outline[0].entries[1].highlights,
+            vec!["First one.", "Second one."]
+        );
     }
 
     #[test]
