@@ -23,6 +23,7 @@ export const ENTRY_FIELDS: Record<string, readonly string[]> = {
     "start_date",
     "end_date",
     "summary",
+    "coursework",
   ],
   "publication": ["title", "authors", "doi", "url", "journal", "date", "summary"],
   "bullet": ["bullet"],
@@ -32,6 +33,13 @@ export const ENTRY_FIELDS: Record<string, readonly string[]> = {
 
 /** Fields holding a list of strings, written one per line. */
 export const LIST_FIELDS = ["authors"] as const;
+
+/** The field an entry type keeps as comma-separated elements, editable and reorderable one at a
+ * time — the same way a one-line entry's `details` already works. */
+export const ELEMENT_FIELDS: Record<string, string> = {
+  "one-line": "details",
+  "education": "coursework",
+};
 
 /** The key a text entry's single value is held under in the form. */
 export const TEXT_FIELD = "text";
