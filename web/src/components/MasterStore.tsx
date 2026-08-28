@@ -36,6 +36,7 @@ import {
   createEntry,
   createSection,
   createVariant,
+  deleteBullet,
   deleteEntry,
   deleteSection,
   eligibleEntries,
@@ -123,8 +124,23 @@ function useLazy<T>(open: boolean, load: () => Promise<T>) {
   return { value, error, reload };
 }
 
+// Recreates a Bullet exactly as it was: same default wording, same other variants.
+async function recreateBullet(entryId: number, bullet: Bullet): Promise<Bullet> {
+  const shown = bullet.variants.find((variant) => variant.is_default) ?? bullet.variants[0];
+  if (!shown) throw new Error("a bullet always has at least one variant");
+  const created = await createBullet(entryId, shown.text, shown.note);
+  for (const variant of bullet.variants) {
+    if (variant === shown) continue;
+    await createVariant(created.id, variant.text, variant.note);
+  }
+  return created;
+}
+
 function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void }) {
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const removeButtonRef = useRef<HTMLSpanElement>(null);
   const shown =
     bullet.variants.find((variant) => variant.is_default) ?? bullet.variants[0];
   const others = bullet.variants.filter((variant) => variant !== shown);
@@ -140,9 +156,27 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
       () => updateVariant(id, was.text, was.note),
     ).then(onEdited);
 
+  const remove = async () => {
+    setBusy(true);
+    const current = { id: bullet.id };
+    await deleteBullet(current.id);
+    // Same current-id-holder trick as an entry delete: undo recreates the bullet under a new
+    // id, so redo must delete whichever id is current, not the one already gone.
+    push({
+      undo: async () => {
+        const recreated = await recreateBullet(bullet.entry_id, bullet);
+        current.id = recreated.id;
+      },
+      redo: () => deleteBullet(current.id),
+    });
+    setBusy(false);
+    setConfirming(false);
+    onEdited();
+  };
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="flex items-start gap-1 py-1 pr-2 pl-7 hover:bg-muted/40">
+      <div className="group flex items-start gap-1 py-1 pr-2 pl-7 hover:bg-muted/40">
         <Grip
           onDragStart={(event) => shown && startWordingDrag(event, shown.text)}
         />
@@ -164,7 +198,19 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
             {bullet.variants.length}
           </span>
         )}
+        <span ref={removeButtonRef}>
+          <RemoveButton label="Delete bullet" onClick={() => setConfirming(true)} />
+        </span>
       </div>
+
+      <DeleteConfirmPopover
+        label="this bullet"
+        anchor={removeButtonRef}
+        open={confirming}
+        busy={busy}
+        onOpenChange={setConfirming}
+        onDelete={remove}
+      />
 
       <CollapsibleContent>
         {others.map((variant) => (
@@ -191,6 +237,31 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
         ))}
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+// A blank row that always sits at the end of an entry's bullets, for typing a new one by hand.
+function AddBulletRow({ entryId, onAdded }: { entryId: number; onAdded: () => void }) {
+  const [key, setKey] = useState(0);
+
+  return (
+    <div className="flex items-start gap-1 py-1 pr-2 pl-7">
+      <span className="mt-2 ml-1 size-1 shrink-0 rounded-full bg-muted-foreground/50" />
+      <EditableText
+        key={key}
+        value=""
+        placeholder="Add a bullet…"
+        className="flex-1 text-xs leading-snug"
+        onCommit={(text) => {
+          const trimmed = text.trim();
+          if (!trimmed) return;
+          createBullet(entryId, trimmed, null).then(() => {
+            setKey((k) => k + 1);
+            onAdded();
+          });
+        }}
+      />
+    </div>
   );
 }
 
@@ -230,6 +301,48 @@ function ElementNode({
         }
         placeholder="(empty — commit to remove)"
         className="flex-1 text-xs leading-snug"
+      />
+    </div>
+  );
+}
+
+// A blank row that always sits at the end of a one-line entry's elements, for typing a new one
+// by hand — mirrors AddBulletRow, but rewrites the comma-separated `details` string instead.
+function AddElementRow({
+  entry,
+  elements,
+  onEdited,
+}: {
+  entry: Entry;
+  elements: string[];
+  onEdited: () => void;
+}) {
+  const [key, setKey] = useState(0);
+  const held = (entry.fields ?? {}) as Record<string, unknown>;
+
+  return (
+    <div className="flex items-start gap-1 py-1 pr-2 pl-7">
+      <span className="mt-2 ml-1 size-1 shrink-0 rounded-full bg-muted-foreground/50" />
+      <EditableText
+        key={key}
+        value=""
+        placeholder="Add…"
+        className="flex-1 text-xs leading-snug"
+        onCommit={(text) => {
+          const trimmed = text.trim();
+          if (!trimmed) return;
+          step(
+            () =>
+              updateEntry(entry.id, {
+                ...held,
+                details: joinElements([...elements, trimmed]),
+              }),
+            () => updateEntry(entry.id, held),
+          ).then(() => {
+            setKey((k) => k + 1);
+            onEdited();
+          });
+        }}
       />
     </div>
   );
@@ -406,13 +519,8 @@ async function recreateEntryWithBullets(
 ): Promise<Entry> {
   const created = await createEntry(entryType, fields);
   for (const bullet of [...bullets].sort((a, b) => a.position - b.position)) {
-    const shown = bullet.variants.find((variant) => variant.is_default) ?? bullet.variants[0];
-    if (!shown) continue;
-    const newBullet = await createBullet(created.id, shown.text, shown.note);
-    for (const variant of bullet.variants) {
-      if (variant === shown) continue;
-      await createVariant(newBullet.id, variant.text, variant.note);
-    }
+    if (bullet.variants.length === 0) continue;
+    await recreateBullet(created.id, bullet);
   }
   return created;
 }
@@ -494,11 +602,15 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
             onEdited={onEdited}
           />
         ))}
+        {entry.entry_type === "one-line" && (
+          <AddElementRow entry={entry} elements={elements} onEdited={onEdited} />
+        )}
         {error && <Note>{error}</Note>}
         {hasBullets && bullets?.length === 0 && <Note>No bullets.</Note>}
         {bullets?.map((bullet) => (
           <BulletNode key={bullet.id} bullet={bullet} onEdited={reload} />
         ))}
+        {hasBullets && <AddBulletRow entryId={entry.id} onAdded={reload} />}
       </CollapsibleContent>
     </Collapsible>
   );
