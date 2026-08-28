@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, GripVertical, Sparkles } from "lucide-react";
 
-import DeleteSectionPopover from "@/components/DeleteSectionPopover";
+import DeleteConfirmPopover from "@/components/DeleteConfirmPopover";
 import EditableText from "@/components/EditableText";
 import ProfileNode from "@/components/ProfileNode";
 import RemoveButton from "@/components/RemoveButton";
@@ -26,14 +26,17 @@ import {
   startSectionDrag,
   startWordingDrag,
 } from "@/lib/placement";
-import { step, useReloadOnHistory } from "@/lib/history";
+import { push, step, useReloadOnHistory } from "@/lib/history";
 import { cn } from "@/lib/utils";
 import {
   AI_UNCONFIGURED_CODE,
   BRAINDUMP_EMPTY_CODE,
   RpcFailure,
   createBullet,
+  createEntry,
   createSection,
+  createVariant,
+  deleteEntry,
   deleteSection,
   eligibleEntries,
   listBullets,
@@ -395,8 +398,32 @@ function SuggestBullets({ entry, onAdded }: { entry: Entry; onAdded: () => void 
   );
 }
 
+// Recreates an entry deleted from the store, with every Bullet and wording it carried — what
+// deleting it cascaded away. Each bullet's default wording becomes the fresh bullet's own
+// (a created bullet's first variant is always its default); the rest are added as variants.
+async function recreateEntryWithBullets(
+  entryType: string,
+  fields: unknown,
+  bullets: Bullet[],
+): Promise<Entry> {
+  const created = await createEntry(entryType, fields);
+  for (const bullet of [...bullets].sort((a, b) => a.position - b.position)) {
+    const shown = bullet.variants.find((variant) => variant.is_default) ?? bullet.variants[0];
+    if (!shown) continue;
+    const newBullet = await createBullet(created.id, shown.text, shown.note);
+    for (const variant of bullet.variants) {
+      if (variant === shown) continue;
+      await createVariant(newBullet.id, variant.text, variant.note);
+    }
+  }
+  return created;
+}
+
 function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) {
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const removeButtonRef = useRef<HTMLSpanElement>(null);
   const { title, subtitle, dates } = entryLabel(entry.entry_type, entry.fields);
   const hasBullets = carriesBullets(entry.entry_type);
   const load = useCallback(() => listBullets(entry.id), [entry.id]);
@@ -407,9 +434,29 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
       ? splitElements(details)
       : [];
 
+  const remove = async () => {
+    setBusy(true);
+    const carried = hasBullets ? await listBullets(entry.id) : [];
+    const current = { id: entry.id };
+    await deleteEntry(current.id);
+    // A plain step() won't do: undo recreates the entry under a new id, so redo — which must
+    // delete *that* row, not the one already gone — needs to track which id is current across
+    // however many times this gets undone and redone, not just reverse the original call once.
+    push({
+      undo: async () => {
+        const recreated = await recreateEntryWithBullets(entry.entry_type, entry.fields, carried);
+        current.id = recreated.id;
+      },
+      redo: () => deleteEntry(current.id),
+    });
+    setBusy(false);
+    setConfirming(false);
+    onEdited();
+  };
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="flex items-center gap-1 py-1 pr-2 pl-4 hover:bg-muted/40">
+      <div className="group flex items-center gap-1 py-1 pr-2 pl-4 hover:bg-muted/40">
         <Grip onDragStart={(event) => startEntryDrag(event, entry.id, entry.entry_type)} />
         <Disclosure open={open} onToggle={() => setOpen(!open)} />
         <span className="truncate text-xs font-medium">{title}</span>
@@ -422,7 +469,19 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
             {dates}
           </span>
         )}
+        <span ref={removeButtonRef}>
+          <RemoveButton label={`Delete ${title}`} onClick={() => setConfirming(true)} />
+        </span>
       </div>
+
+      <DeleteConfirmPopover
+        label={title}
+        anchor={removeButtonRef}
+        open={confirming}
+        busy={busy}
+        onOpenChange={setConfirming}
+        onDelete={remove}
+      />
 
       <CollapsibleContent>
         <EntryFields entry={entry} onEdited={onEdited} />
@@ -482,8 +541,8 @@ function SectionNode({ section, onDeleted }: { section: Section; onDeleted: () =
         </span>
       </div>
 
-      <DeleteSectionPopover
-        section={section.name}
+      <DeleteConfirmPopover
+        label={section.name}
         anchor={removeButtonRef}
         open={confirming}
         busy={busy}
