@@ -86,6 +86,8 @@ pub enum ResumeError {
     Invalid(Vec<String>),
     #[error("section {section} has no entry at index {index}")]
     NoSuchEntry { section: String, index: usize },
+    #[error("no section called {section}")]
+    NoSuchSection { section: String },
     #[error("rendercv has no theme called {theme}")]
     UnknownTheme { theme: String },
 }
@@ -489,6 +491,34 @@ pub fn place_section(
     let patch = place_in_sections(&document, sections_route, section, empty);
 
     apply(repository_path, &document, &[patch], profile)
+}
+
+/// Removes one section, with everything it holds.
+pub fn remove_section(
+    repository_path: &Path,
+    section: &str,
+    profile: &Profile,
+) -> Result<(), ResumeError> {
+    let (_, document) = load(repository_path)?;
+    let route = yamlpath::Route::default()
+        .with_key(CV_KEY)
+        .with_key(SECTIONS_KEY)
+        .with_key(section);
+    if !document.query_exists(&route) {
+        return Err(ResumeError::NoSuchSection {
+            section: section.to_string(),
+        });
+    }
+
+    apply(
+        repository_path,
+        &document,
+        &[yamlpatch::Patch {
+            route,
+            operation: yamlpatch::Op::Remove,
+        }],
+        profile,
+    )
 }
 
 /// Removes one entry from a section, with everything it holds.
@@ -1353,6 +1383,29 @@ design:
         assert!(matches!(
             remove_entry(dir.path(), "Experience", 9, &populated_profile()),
             Err(ResumeError::NoSuchEntry { .. })
+        ));
+    }
+
+    #[test]
+    fn removing_a_section_takes_only_that_section() {
+        let dir = seeded(
+            "cv:\n  sections:\n    Experience:\n      - company: Helio\n        position: Engineer\n    Education:\n      - institution: College\n        area: Computer Science\n        degree: BS\n",
+        );
+
+        remove_section(dir.path(), "Experience", &populated_profile()).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline.len(), 1);
+        assert_eq!(outline[0].name, "Education");
+    }
+
+    #[test]
+    fn removing_a_section_that_is_not_there_is_rejected() {
+        let dir = seeded(SAMPLE);
+
+        assert!(matches!(
+            remove_section(dir.path(), "Nonexistent", &populated_profile()),
+            Err(ResumeError::NoSuchSection { .. })
         ));
     }
 

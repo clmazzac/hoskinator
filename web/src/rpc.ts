@@ -443,6 +443,10 @@ export function placeSection(section: string): Promise<null> {
   return call<null>("resume.place_section", [section]);
 }
 
+export function removeResumeSection(section: string): Promise<null> {
+  return call<null>("resume.remove_section", [section]);
+}
+
 export interface RenderedPdf {
   path: string;
 }
