@@ -83,7 +83,7 @@ export default function ProfileNode() {
 
   useEffect(load, [load]);
 
-  useReloadOnHistory(load);
+  useReloadOnHistory(load, "store");
 
   const commit = (next: Profile) => {
     const was = profile;

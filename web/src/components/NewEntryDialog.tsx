@@ -43,7 +43,11 @@ export default function NewEntryDialog({
     const fields = buildFields(entryType, values);
     createEntry(entryType, fields).then(
       (created) => {
-        push({ undo: () => deleteEntry(created.id), redo: () => Promise.resolve(created) });
+        push({
+          undo: () => deleteEntry(created.id),
+          redo: () => Promise.resolve(created),
+          kind: "store",
+        });
         setBusy(false);
         setValues({});
         onOpenChange(false);
