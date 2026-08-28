@@ -271,32 +271,40 @@ pub fn place_bullet(
     apply(repository_path, &document, &[patch], profile)
 }
 
-/// Builds the patch adding `section: value` under `cv.sections`, creating `sections:` if the
-/// resume has none.
+/// Builds the patches adding `section: value` under `cv.sections`, creating `sections:` as a
+/// block mapping if the resume has none.
 fn place_in_sections<'a>(
     document: &yamlpath::Document,
     sections_route: yamlpath::Route<'a>,
     section: &'a str,
     value: yaml_serde::Value,
-) -> yamlpatch::Patch<'a> {
+) -> Vec<yamlpatch::Patch<'a>> {
     if document.query_exists(&sections_route) {
-        yamlpatch::Patch {
+        vec![yamlpatch::Patch {
             route: sections_route,
             operation: yamlpatch::Op::Add {
                 key: section.to_string(),
                 value,
             },
-        }
+        }]
     } else {
+        // A key `Add` renders its value inline: without the `as_block` replace below, every
+        // later route into any key nested inside `sections:` would fail to query at all, not
+        // just an `Append` into the one section just added.
         let mut sections = yaml_serde::Mapping::new();
         sections.insert(yaml_serde::Value::String(section.to_string()), value);
-        yamlpatch::Patch {
+        let create = yamlpatch::Patch {
             route: yamlpath::Route::default().with_key(CV_KEY),
             operation: yamlpatch::Op::Add {
                 key: SECTIONS_KEY.to_string(),
-                value: yaml_serde::Value::Mapping(sections),
+                value: yaml_serde::Value::Mapping(sections.clone()),
             },
-        }
+        };
+        let as_block = yamlpatch::Patch {
+            route: sections_route,
+            operation: yamlpatch::Op::Replace(yaml_serde::Value::Mapping(sections)),
+        };
+        vec![create, as_block]
     }
 }
 
@@ -310,7 +318,7 @@ pub fn place_entry(
     fields: Value,
     profile: &Profile,
 ) -> Result<(), ResumeError> {
-    let (_, document) = load(repository_path)?;
+    let (path, document) = load(repository_path)?;
     let entry = yaml_serde::to_value(&fields).map_err(ResumeError::EncodeProfile)?;
 
     let sections_route = yamlpath::Route::default()
@@ -318,7 +326,19 @@ pub fn place_entry(
         .with_key(SECTIONS_KEY);
     let section_route = sections_route.with_key(section);
 
-    if document.query_exists(&section_route) {
+    let parsed: yaml_serde::Value =
+        yaml_serde::from_str(document.source()).map_err(|source| ResumeError::Decode {
+            path: path.clone(),
+            source,
+        })?;
+    let has_entries = parsed
+        .get(CV_KEY)
+        .and_then(|cv| cv.get(SECTIONS_KEY))
+        .and_then(|sections| sections.get(section))
+        .and_then(|value| value.as_sequence())
+        .is_some_and(|entries| !entries.is_empty());
+
+    if has_entries {
         let patch = yamlpatch::Patch {
             route: section_route,
             operation: yamlpatch::Op::Append { value: entry },
@@ -326,17 +346,26 @@ pub fn place_entry(
         return apply(repository_path, &document, &[patch], profile);
     }
 
-    // A key `Add` renders its value inline, so a section created that way arrives as a flow
-    // mapping. Replacing the section afterwards re-emits it as a block sequence, which is what a
-    // hand-editable file wants and what later field writes need.
+    // Whichever brought the section here — missing entirely, or placed empty by
+    // `place_section` — a key `Add` and an empty sequence both render inline, and `yamlpatch`
+    // refuses to `Append` into a flow sequence. Replacing it re-emits it as a block sequence,
+    // which is what a hand-editable file wants and what later field writes need.
     let entries = yaml_serde::Value::Sequence(vec![entry]);
-    let create = place_in_sections(&document, sections_route, section, entries.clone());
-    let as_block = yamlpatch::Patch {
+    let mut patches = Vec::new();
+    if !document.query_exists(&section_route) {
+        patches.extend(place_in_sections(
+            &document,
+            sections_route,
+            section,
+            entries.clone(),
+        ));
+    }
+    patches.push(yamlpatch::Patch {
         route: section_route,
         operation: yamlpatch::Op::Replace(entries),
-    };
+    });
 
-    apply(repository_path, &document, &[create, as_block], profile)
+    apply(repository_path, &document, &patches, profile)
 }
 
 /// How the resume looks: everything under `design:` the picker can set.
@@ -487,10 +516,13 @@ pub fn place_section(
         return Ok(());
     }
 
+    // An empty sequence has no block form to re-emit as (unlike `place_entry`'s non-empty case),
+    // so it stays a flow `[]` regardless. `place_entry` checks for that and replaces it outright
+    // rather than trying to `Append` into it.
     let empty = yaml_serde::Value::Sequence(Vec::new());
-    let patch = place_in_sections(&document, sections_route, section, empty);
+    let patches = place_in_sections(&document, sections_route, section, empty);
 
-    apply(repository_path, &document, &[patch], profile)
+    apply(repository_path, &document, &patches, profile)
 }
 
 /// Removes one section, with everything it holds.
@@ -1234,6 +1266,22 @@ design:
     }
 
     #[test]
+    fn removing_a_freshly_created_highlight_takes_only_that_highlight() {
+        let dir = seeded(SAMPLE);
+        let profile = populated_profile();
+
+        // Entry 1 (Ravensmoor) has no `highlights:` yet, so this Adds it fresh.
+        place_bullet(dir.path(), "Experience", 1, "First one.".into(), &profile).unwrap();
+        remove_bullet(dir.path(), "Experience", 1, 0, &profile).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].name, "Experience");
+        assert_eq!(outline[0].entries.len(), 2);
+        assert_eq!(outline[0].entries[1].fields["company"], "Ravensmoor");
+        assert_eq!(outline[0].entries[1].highlights, Vec::<String>::new());
+    }
+
+    #[test]
     fn placing_the_same_wording_twice_adds_it_twice() {
         let dir = seeded(SAMPLE);
         let profile = populated_profile();
@@ -1321,6 +1369,48 @@ design:
     }
 
     #[test]
+    fn an_entry_can_be_placed_after_several_sections_share_one_cold_start() {
+        // Reproduces the live failure: several sections placed empty in a row, from a resume
+        // with no `sections:` key yet, then an entry placed into one of them.
+        let dir = seeded("cv:\n  name: Cam\n");
+        let profile = populated_profile();
+
+        for section in ["Education", "Experience", "Projects", "Skills"] {
+            place_section(dir.path(), section, &profile).unwrap();
+        }
+        place_entry(
+            dir.path(),
+            "Experience",
+            json!({ "company": "Knightscope", "position": "SWE Intern" }),
+            &profile,
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        let experience = outline.iter().find(|s| s.name == "Experience").unwrap();
+        assert_eq!(experience.entries[0].fields["company"], "Knightscope");
+    }
+
+    #[test]
+    fn an_entry_can_be_placed_into_a_section_placed_empty() {
+        let dir = seeded("cv:\n  name: Someone\n");
+        let profile = populated_profile();
+
+        place_section(dir.path(), "Experience", &profile).unwrap();
+        place_entry(
+            dir.path(),
+            "Experience",
+            json!({ "company": "Acme", "position": "Engineer" }),
+            &profile,
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        let experience = outline.iter().find(|s| s.name == "Experience").unwrap();
+        assert_eq!(experience.entries[0].fields["company"], "Acme");
+    }
+
+    #[test]
     fn drop_order_is_resume_order() {
         let dir = seeded("cv:\n  name: Someone\n");
         let profile = populated_profile();
@@ -1363,6 +1453,25 @@ design:
         let outline = outline(dir.path()).unwrap();
         assert_eq!(outline[0].entries[0].highlights, Vec::<String>::new());
         assert_eq!(outline[0].entries[0].fields["company"], "Helio");
+    }
+
+    #[test]
+    fn a_wording_can_be_placed_after_the_last_one_was_removed() {
+        let dir = seeded(SAMPLE);
+        let profile = populated_profile();
+
+        remove_bullet(dir.path(), "Experience", 0, 0, &profile).unwrap();
+        place_bullet(
+            dir.path(),
+            "Experience",
+            0,
+            "Did another thing.".into(),
+            &profile,
+        )
+        .unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].entries[0].highlights, ["Did another thing."]);
     }
 
     #[test]
