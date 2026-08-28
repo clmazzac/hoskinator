@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import EntryTypeSelect from "@/components/EntryTypeSelect";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,13 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ENTRY_FIELDS, TEXT_FIELD, buildFields, isListField } from "@/entryFields";
 import { push } from "@/lib/history";
@@ -69,23 +63,7 @@ export default function NewEntryDialog({
         </DialogHeader>
 
         <div className="grid gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="new-entry-type" className="text-xs">
-              Type
-            </Label>
-            <Select value={entryType} onValueChange={(next) => next && retype(next)}>
-              <SelectTrigger id="new-entry-type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ENTRY_TYPES.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {type}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <EntryTypeSelect id="new-entry-type" value={entryType} onChange={retype} />
 
           {entryType === "text" ? (
             <div className="grid gap-1.5">

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, GripVertical, Sparkles } from "lucide-react";
 
+import DeleteSectionPopover from "@/components/DeleteSectionPopover";
 import EditableText from "@/components/EditableText";
 import ProfileNode from "@/components/ProfileNode";
+import RemoveButton from "@/components/RemoveButton";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -31,6 +33,8 @@ import {
   BRAINDUMP_EMPTY_CODE,
   RpcFailure,
   createBullet,
+  createSection,
+  deleteSection,
   eligibleEntries,
   listBullets,
   listSections,
@@ -435,14 +439,29 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
   );
 }
 
-function SectionNode({ section }: { section: Section }) {
+function SectionNode({ section, onDeleted }: { section: Section; onDeleted: () => void }) {
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const removeButtonRef = useRef<HTMLSpanElement>(null);
   const load = useCallback(() => eligibleEntries(section.name), [section.name]);
   const { value: entries, error, reload } = useLazy<Entry[]>(open, load);
 
+  const remove = () => {
+    setBusy(true);
+    step(
+      () => deleteSection(section.name),
+      () => createSection(section.name, section.entry_type),
+    ).then(() => {
+      setBusy(false);
+      setConfirming(false);
+      onDeleted();
+    });
+  };
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="flex items-center gap-1 border-b px-2 py-1.5 hover:bg-muted/40">
+      <div className="group flex items-center gap-1 border-b px-2 py-1.5 hover:bg-muted/40">
         <Grip onDragStart={(event) => startSectionDrag(event, section.name)} />
         <Disclosure open={open} onToggle={() => setOpen(!open)} />
         <span className="text-xs font-semibold">{section.name}</span>
@@ -450,7 +469,19 @@ function SectionNode({ section }: { section: Section }) {
         <span className="shrink-0 text-[10px] text-muted-foreground">
           {section.entry_type}
         </span>
+        <span ref={removeButtonRef}>
+          <RemoveButton label={`Delete ${section.name}`} onClick={() => setConfirming(true)} />
+        </span>
       </div>
+
+      <DeleteSectionPopover
+        section={section.name}
+        anchor={removeButtonRef}
+        open={confirming}
+        busy={busy}
+        onOpenChange={setConfirming}
+        onDelete={remove}
+      />
 
       <CollapsibleContent className="border-b">
         {error && <Note>{error}</Note>}
@@ -483,7 +514,7 @@ export default function MasterStore() {
       {!error && !sections && <Note>Loading…</Note>}
       {sections?.length === 0 && <Note>No Sections yet.</Note>}
       {sections?.map((section) => (
-        <SectionNode key={section.name} section={section} />
+        <SectionNode key={section.name} section={section} onDeleted={load} />
       ))}
     </div>
   );

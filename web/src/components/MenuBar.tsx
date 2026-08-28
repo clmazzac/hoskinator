@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import {
   ChevronDown,
   FilePlus2,
+  FolderPlus,
   GitBranch,
   Home,
   KeyRound,
   Moon,
+  Plus,
   Redo2,
   Sheet,
   Sun,
@@ -14,6 +16,7 @@ import {
 
 import ApiKeyDialog from "@/components/ApiKeyDialog";
 import NewEntryDialog from "@/components/NewEntryDialog";
+import NewSectionDialog from "@/components/NewSectionDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -57,6 +60,7 @@ export default function MenuBar({
   const [branches, setBranches] = useState<Branch[]>([]);
   const [sheet, setSheet] = useState<string | null>(null);
   const [creatingEntry, setCreatingEntry] = useState(false);
+  const [creatingSection, setCreatingSection] = useState(false);
   const [settingApiKey, setSettingApiKey] = useState(false);
 
   useEffect(() => {
@@ -170,10 +174,6 @@ export default function MenuBar({
                   ))}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            <DropdownMenuItem className="text-xs" onClick={() => setCreatingEntry(true)}>
-              <FilePlus2 className="size-3.5" />
-              New entry…
-            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-xs"
@@ -188,7 +188,36 @@ export default function MenuBar({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+      {branch && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-2 text-xs font-normal"
+                title="Add to the bank"
+              >
+                <Plus className="size-3.5" />
+                New
+                <ChevronDown className="size-3" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start" className="min-w-44">
+            <DropdownMenuItem className="text-xs" onClick={() => setCreatingEntry(true)}>
+              <FilePlus2 className="size-3.5" />
+              New entry…
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-xs" onClick={() => setCreatingSection(true)}>
+              <FolderPlus className="size-3.5" />
+              New section…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <NewEntryDialog open={creatingEntry} onOpenChange={setCreatingEntry} />
+      <NewSectionDialog open={creatingSection} onOpenChange={setCreatingSection} />
 
       <div className="flex-1" />
 
