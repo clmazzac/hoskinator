@@ -110,12 +110,10 @@ function useLazy<T>(open: boolean, load: () => Promise<T>) {
   }, [load]);
 
   // A store edit elsewhere (a new entry, a moved bullet) leaves this stale otherwise: the
-  // effect below only fetches once, on the first open.
-  const invalidate = useCallback(() => {
-    setValue(null);
-    setError(null);
-  }, []);
-  useReloadOnHistory(invalidate);
+  // effect below only fetches once, on the first open. Reloading in place — rather than
+  // clearing `value` to null first — keeps whatever's already rendered on screen instead of
+  // briefly unmounting it, which was collapsing every open entry on any unrelated store edit.
+  useReloadOnHistory(reload);
 
   useEffect(() => {
     if (!open || value !== null || error !== null) return;
