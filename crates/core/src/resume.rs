@@ -553,26 +553,52 @@ pub fn remove_section(
     )
 }
 
-/// Removes one entry from a section, with everything it holds.
+/// Removes one entry from a section, with everything it holds. The section itself is left in
+/// place, even once empty.
 pub fn remove_entry(
     repository_path: &Path,
     section: &str,
     entry_index: usize,
     profile: &Profile,
 ) -> Result<(), ResumeError> {
-    let (_, document) = load(repository_path)?;
+    let (path, document) = load(repository_path)?;
     let route = entry_route(section, entry_index);
     require(&document, &route, section, entry_index)?;
 
-    apply(
-        repository_path,
-        &document,
-        &[yamlpatch::Patch {
+    let sections_route = yamlpath::Route::default()
+        .with_key(CV_KEY)
+        .with_key(SECTIONS_KEY);
+    let section_route = sections_route.with_key(section);
+
+    let parsed: yaml_serde::Value =
+        yaml_serde::from_str(document.source()).map_err(|source| ResumeError::Decode {
+            path: path.clone(),
+            source,
+        })?;
+    let is_last_entry = parsed
+        .get(CV_KEY)
+        .and_then(|cv| cv.get(SECTIONS_KEY))
+        .and_then(|sections| sections.get(section))
+        .and_then(|value| value.as_sequence())
+        .is_some_and(|entries| entries.len() == 1);
+
+    // Removing the only entry would leave the section an empty sequence — but `Remove` doesn't
+    // stop there: an empty result cascades into removing the key that held it, and, `sections:`
+    // then holding nothing either, that key too. Replacing the section with `[]` outright avoids
+    // the cascade; the section itself is meant to survive down to empty, same as `place_section`.
+    let patch = if is_last_entry {
+        yamlpatch::Patch {
+            route: section_route,
+            operation: yamlpatch::Op::Replace(yaml_serde::Value::Sequence(Vec::new())),
+        }
+    } else {
+        yamlpatch::Patch {
             route,
             operation: yamlpatch::Op::Remove,
-        }],
-        profile,
-    )
+        }
+    };
+
+    apply(repository_path, &document, &[patch], profile)
 }
 
 /// Removes one wording from an entry's `highlights`.
@@ -1442,6 +1468,34 @@ design:
         let outline = outline(dir.path()).unwrap();
         assert_eq!(outline[0].entries.len(), 1);
         assert_eq!(outline[0].entries[0].fields["company"], "Ravensmoor");
+    }
+
+    #[test]
+    fn removing_the_only_highlight_leaves_the_entry() {
+        let dir = seeded(
+            "cv:\n  sections:\n    Experience:\n      - company: Knightscope\n        position: SWE Intern\n        highlights:\n          - Did a thing.\n",
+        );
+
+        remove_bullet(dir.path(), "Experience", 0, 0, &populated_profile()).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline[0].entries.len(), 1);
+        assert_eq!(outline[0].entries[0].fields["company"], "Knightscope");
+        assert_eq!(outline[0].entries[0].highlights, Vec::<String>::new());
+    }
+
+    #[test]
+    fn removing_the_only_entry_leaves_the_section_empty_not_gone() {
+        let dir = seeded(
+            "cv:\n  sections:\n    Experience:\n      - company: Knightscope\n        position: SWE Intern\n",
+        );
+
+        remove_entry(dir.path(), "Experience", 0, &populated_profile()).unwrap();
+
+        let outline = outline(dir.path()).unwrap();
+        assert_eq!(outline.len(), 1);
+        assert_eq!(outline[0].name, "Experience");
+        assert_eq!(outline[0].entries.len(), 0);
     }
 
     #[test]
