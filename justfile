@@ -7,7 +7,7 @@ dev:
     #!/usr/bin/env bash
     set -euo pipefail
     trap 'kill 0' EXIT
-    cargo run -p hoskinator -- serve &
+    cargo run -p hoskinator --features ai -- serve &
     npm --prefix web run dev &
     wait
 
