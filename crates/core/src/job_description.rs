@@ -18,6 +18,8 @@ pub struct JobDescription {
     pub title: Option<String>,
     pub text: String,
     pub created_at: String,
+    /// The application this posting was pasted onto, if it came from one rather than `jd.create`.
+    pub application_id: Option<i64>,
 }
 
 /// The text and optional label for a new Job Description.
@@ -74,7 +76,8 @@ impl Store {
                 // that reaches it is written out and decoded by column name.
                 Some(query) => diesel::sql_query(
                     "SELECT job_description.id, job_description.title, \
-                     job_description.text, job_description.created_at \
+                     job_description.text, job_description.created_at, \
+                     job_description.application_id \
                      FROM job_description \
                      JOIN job_description_fts \
                      ON job_description_fts.rowid = job_description.id \

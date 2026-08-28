@@ -518,6 +518,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn opening_a_version_ten_store_backfills_job_descriptions_for_pasted_postings() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("hoskinator.db");
+        let mut connection = SqliteConnection::establish(path.to_str().unwrap()).unwrap();
+        connection
+            .batch_execute(&format!(
+                "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\nPRAGMA user_version = 10;",
+                include_str!("../migrations/0001_profile.sql"),
+                include_str!("../migrations/0002_section.sql"),
+                include_str!("../migrations/0003_job_descriptions.sql"),
+                include_str!("../migrations/0004_entry.sql"),
+                include_str!("../migrations/0005_bullet.sql"),
+                include_str!("../migrations/0006_search.sql"),
+                include_str!("../migrations/0007_application.sql"),
+                include_str!("../migrations/0008_application_jd.sql"),
+                include_str!("../migrations/0009_application_repository.sql"),
+                include_str!("../migrations/0010_entry_braindump.sql"),
+            ))
+            .unwrap();
+        connection
+            .batch_execute(
+                r#"INSERT INTO application (company, position, jd_text)
+                   VALUES ('Amazon', 'SDE Intern, Annapurna Labs', 'Build custom silicon.')"#,
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&path).await.unwrap();
+
+        let jds = store.job_descriptions(None).await.unwrap();
+        assert_eq!(jds.len(), 1);
+        assert_eq!(jds[0].application_id, Some(1));
+        assert_eq!(jds[0].text, "Build custom silicon.");
+        assert_eq!(
+            jds[0].title.as_deref(),
+            Some("Amazon — SDE Intern, Annapurna Labs")
+        );
+    }
+
+    #[tokio::test]
     async fn reopening_an_existing_store_applies_nothing_further() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("store").join("hoskinator.db");
