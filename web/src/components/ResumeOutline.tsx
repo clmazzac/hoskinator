@@ -44,6 +44,7 @@ import {
   moveResumeSection,
   placeSection,
   removeResumeEntry,
+  removeResumeSection,
   resumeOutline,
   setResumeEntryField,
   type ResumeEntry,
@@ -549,6 +550,16 @@ export default function ResumeOutline() {
               }}
             >
               <span className="text-xs font-semibold">{section.name}</span>
+              <span className="flex-1" />
+              <RemoveButton
+                label={`Remove ${section.name}`}
+                onClick={() =>
+                  run(
+                    (prev) => prev.filter((candidate) => candidate.name !== section.name),
+                    () => removeResumeSection(section.name),
+                  )
+                }
+              />
             </div>
             {sectionEdge?.name === section.name && sectionEdge.edge === "after" && <DropLine />}
             {section.entries.map((entry) => (

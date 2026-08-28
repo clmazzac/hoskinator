@@ -112,6 +112,8 @@ pub const BRAINDUMP_EMPTY: i32 = -32038;
 /// The `ai` feature is compiled in, but reading or writing the configuration file failed.
 #[cfg(feature = "ai")]
 pub const CONFIG_IO: i32 = -32039;
+/// The resume has no section by that name.
+pub const RESUME_NO_SUCH_SECTION: i32 = -32040;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -402,6 +404,9 @@ pub trait ResumeRpc {
 
     #[method(name = "resume.place_section")]
     async fn resume_place_section(&self, section: String) -> RpcResult<()>;
+
+    #[method(name = "resume.remove_section")]
+    async fn resume_remove_section(&self, section: String) -> RpcResult<()>;
 
     #[method(name = "resume.remove_entry")]
     async fn resume_remove_entry(&self, section: String, entry_index: usize) -> RpcResult<()>;
@@ -826,6 +831,13 @@ impl ResumeRpcServer for ResumeApi {
         let path = self.repository_path()?;
         let profile = self.store.profile().await.map_err(store_rpc_error)?;
         self.operation(move || resume::place_section(&path, &section, &profile))
+            .await
+    }
+
+    async fn resume_remove_section(&self, section: String) -> RpcResult<()> {
+        let path = self.repository_path()?;
+        let profile = self.store.profile().await.map_err(store_rpc_error)?;
+        self.operation(move || resume::remove_section(&path, &section, &profile))
             .await
     }
 
@@ -1316,6 +1328,7 @@ fn resume_code_for(error: &ResumeError) -> i32 {
         ResumeError::NotFound { .. } => RESUME_NOT_FOUND,
         ResumeError::Invalid(_) => RESUME_INVALID,
         ResumeError::NoSuchEntry { .. } => RESUME_NO_SUCH_ENTRY,
+        ResumeError::NoSuchSection { .. } => RESUME_NO_SUCH_SECTION,
         ResumeError::UnknownTheme { .. } => RESUME_UNKNOWN_THEME,
         ResumeError::Read { .. }
         | ResumeError::Write { .. }
