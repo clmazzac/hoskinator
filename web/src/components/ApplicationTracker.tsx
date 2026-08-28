@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, ExternalLink, Plus, Upload, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
+  Download,
+  ExternalLink,
+  Plus,
+  Upload,
+  X,
+} from "lucide-react";
 
 import EditableText from "@/components/EditableText";
 import SheetImport from "@/components/SheetImport";
@@ -51,7 +60,53 @@ function fields(application: Application): NewApplication {
 }
 
 function Cell({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={cn("px-2 py-1.5 align-middle", className)}>{children}</td>;
+  return <td className={cn("px-3 py-2.5 align-middle", className)}>{children}</td>;
+}
+
+/// A key every column but the trailing delete button can sort by, alphabetically on its raw
+/// string value.
+type SortKey = keyof Pick<
+  Application,
+  | "company"
+  | "position"
+  | "date_applied"
+  | "status"
+  | "listing_url"
+  | "resume_branch"
+  | "notes"
+  | "jd_text"
+>;
+
+function SortHeader({
+  label,
+  sort,
+  column,
+  onClick,
+}: {
+  label: string;
+  sort: { key: SortKey; direction: "asc" | "desc" } | null;
+  column: SortKey;
+  onClick: () => void;
+}) {
+  const active = sort?.key === column;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-0.5 hover:text-foreground"
+    >
+      {label}
+      {active ? (
+        sort.direction === "asc" ? (
+          <ChevronUp className="size-3" />
+        ) : (
+          <ChevronDown className="size-3" />
+        )
+      ) : (
+        <ChevronsUpDown className="size-3 opacity-30" />
+      )}
+    </button>
+  );
 }
 
 export default function ApplicationTracker({
@@ -67,18 +122,29 @@ export default function ApplicationTracker({
   const [hideSettled, setHideSettled] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" } | null>(null);
 
   useEffect(() => {
     applicationStatuses().then(setStatuses, () => setStatuses([]));
   }, []);
 
-  const shown = useMemo(
-    () =>
-      hideSettled
-        ? applications.filter((one) => !SETTLED.includes(one.status))
-        : applications,
-    [applications, hideSettled],
-  );
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) =>
+      prev?.key === key
+        ? { key, direction: prev.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: "asc" },
+    );
+
+  const shown = useMemo(() => {
+    const filtered = hideSettled
+      ? applications.filter((one) => !SETTLED.includes(one.status))
+      : applications;
+    if (!sort) return filtered;
+    const factor = sort.direction === "asc" ? 1 : -1;
+    return [...filtered].sort(
+      (a, b) => factor * String(a[sort.key] ?? "").localeCompare(String(b[sort.key] ?? "")),
+    );
+  }, [applications, hideSettled, sort]);
 
   const counts = useMemo(() => {
     const tally = new Map<string, number>();
@@ -162,38 +228,54 @@ export default function ApplicationTracker({
       </header>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[52rem] text-xs">
+        <table className="w-full min-w-[64rem] text-sm">
           <thead>
-            <tr className="border-b text-left text-[10px] tracking-wide text-muted-foreground uppercase">
-              <th className="px-2 py-1.5 font-medium">Company</th>
-              <th className="px-2 py-1.5 font-medium">Position</th>
-              <th className="px-2 py-1.5 font-medium">Applied</th>
-              <th className="px-2 py-1.5 font-medium">Status</th>
-              <th className="px-2 py-1.5 font-medium">Listing</th>
-              <th className="px-2 py-1.5 font-medium">Resume</th>
-              <th className="px-2 py-1.5 font-medium">Notes</th>
-              <th className="px-2 py-1.5 font-medium">Job description</th>
+            <tr className="border-b text-left text-xs tracking-wide text-muted-foreground uppercase">
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Company" sort={sort} column="company" onClick={() => toggleSort("company")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Position" sort={sort} column="position" onClick={() => toggleSort("position")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Applied" sort={sort} column="date_applied" onClick={() => toggleSort("date_applied")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Status" sort={sort} column="status" onClick={() => toggleSort("status")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Listing" sort={sort} column="listing_url" onClick={() => toggleSort("listing_url")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Resume" sort={sort} column="resume_branch" onClick={() => toggleSort("resume_branch")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Notes" sort={sort} column="notes" onClick={() => toggleSort("notes")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Job description" sort={sort} column="jd_text" onClick={() => toggleSort("jd_text")} />
+              </th>
               <th className="w-8" />
             </tr>
           </thead>
           <tbody>
             {shown.map((application) => (
               <tr key={application.id} className="group border-b last:border-b-0">
-                <Cell className="min-w-32">
+                <Cell className="min-w-40">
                   <EditableText
                     value={application.company}
                     onCommit={(company) => save(application, { company })}
                     placeholder="Company"
                   />
                 </Cell>
-                <Cell className="min-w-48">
+                <Cell className="min-w-80">
                   <EditableText
                     value={application.position}
                     onCommit={(position) => save(application, { position })}
                     placeholder="Position"
                   />
                 </Cell>
-                <Cell className="w-28">
+                <Cell className="w-32">
                   <EditableText
                     value={application.date_applied ?? ""}
                     onCommit={(date) => save(application, { date_applied: date || null })}
@@ -201,7 +283,7 @@ export default function ApplicationTracker({
                     className="tabular-nums"
                   />
                 </Cell>
-                <Cell className="w-32">
+                <Cell className="w-36">
                   <Select
                     value={application.status}
                     onValueChange={(status) => status && save(application, { status })}
@@ -209,7 +291,7 @@ export default function ApplicationTracker({
                     <SelectTrigger
                       size="sm"
                       className={cn(
-                        "h-6 w-full border-transparent text-xs shadow-none",
+                        "h-7 w-full border-transparent text-sm shadow-none",
                         SWATCH[application.status],
                       )}
                     >
@@ -217,20 +299,21 @@ export default function ApplicationTracker({
                     </SelectTrigger>
                     <SelectContent>
                       {statuses.map((status) => (
-                        <SelectItem key={status} value={status} className="text-xs">
+                        <SelectItem key={status} value={status} className="text-sm">
                           {status}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </Cell>
-                <Cell className="max-w-40">
+                <Cell className="max-w-48">
                   <div className="flex items-center gap-1">
                     <EditableText
                       value={application.listing_url ?? ""}
                       onCommit={(url) => save(application, { listing_url: url || null })}
                       placeholder="URL"
                       className="truncate"
+                      title={application.listing_url ?? undefined}
                     />
                     {application.listing_url && (
                       <a
@@ -240,12 +323,12 @@ export default function ApplicationTracker({
                         className="shrink-0 text-muted-foreground hover:text-foreground"
                         title="Open listing"
                       >
-                        <ExternalLink className="size-3" />
+                        <ExternalLink className="size-3.5" />
                       </a>
                     )}
                   </div>
                 </Cell>
-                <Cell className="w-48">
+                <Cell className="max-w-40">
                   <Select
                     value={application.resume_branch ?? ""}
                     onValueChange={(branch) =>
@@ -254,16 +337,17 @@ export default function ApplicationTracker({
                   >
                     <SelectTrigger
                       size="sm"
-                      className="h-6 w-full border-transparent text-xs shadow-none hover:border-border"
+                      className="h-7 w-full border-transparent text-sm shadow-none hover:border-border"
+                      title={application.resume_branch ?? undefined}
                     >
-                      <SelectValue placeholder="—" />
+                      <SelectValue placeholder="—" className="truncate" />
                     </SelectTrigger>
                     <SelectContent>
                       {branches.map((branch) => (
                         <SelectItem
                           key={branch.name}
                           value={branch.name}
-                          className="font-mono text-xs"
+                          className="font-mono text-sm"
                         >
                           {branch.name}
                         </SelectItem>
@@ -271,7 +355,7 @@ export default function ApplicationTracker({
                     </SelectContent>
                   </Select>
                 </Cell>
-                <Cell className="min-w-40">
+                <Cell className="min-w-56">
                   <EditableText
                     value={application.notes ?? ""}
                     onCommit={(notes) => save(application, { notes: notes || null })}
@@ -291,7 +375,7 @@ export default function ApplicationTracker({
                     type="button"
                     aria-label={`Remove ${application.company || "application"}`}
                     title="Remove"
-                    className="grid size-5 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
+                    className="grid size-6 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
                     onClick={() =>
                       deleteApplication(application.id).then(onChanged, (failure: Error) =>
                         setError(failure.message),
