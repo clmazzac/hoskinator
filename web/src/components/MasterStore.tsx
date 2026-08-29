@@ -115,7 +115,7 @@ function useLazy<T>(open: boolean, load: () => Promise<T>) {
   // effect below only fetches once, on the first open. Reloading in place — rather than
   // clearing `value` to null first — keeps whatever's already rendered on screen instead of
   // briefly unmounting it, which was collapsing every open entry on any unrelated store edit.
-  useReloadOnHistory(reload);
+  useReloadOnHistory(reload, "store");
 
   useEffect(() => {
     if (!open || value !== null || error !== null) return;
@@ -169,6 +169,7 @@ function BulletNode({ bullet, onEdited }: { bullet: Bullet; onEdited: () => void
         current.id = recreated.id;
       },
       redo: () => deleteBullet(current.id),
+      kind: "store",
     });
     setBusy(false);
     setConfirming(false);
@@ -559,6 +560,7 @@ function EntryNode({ entry, onEdited }: { entry: Entry; onEdited: () => void }) 
         current.id = recreated.id;
       },
       redo: () => deleteEntry(current.id),
+      kind: "store",
     });
     setBusy(false);
     setConfirming(false);
@@ -689,7 +691,7 @@ export default function MasterStore() {
   }, []);
 
   useEffect(load, [load]);
-  useReloadOnHistory(load);
+  useReloadOnHistory(load, "store");
 
   return (
     <div>

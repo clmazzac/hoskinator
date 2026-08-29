@@ -33,7 +33,11 @@ export default function NewSectionDialog({
     setError(null);
     createSection(name, entryType).then(
       (created) => {
-        push({ undo: () => deleteSection(created.name), redo: () => Promise.resolve(created) });
+        push({
+          undo: () => deleteSection(created.name),
+          redo: () => Promise.resolve(created),
+          kind: "store",
+        });
         setBusy(false);
         setName("");
         onOpenChange(false);

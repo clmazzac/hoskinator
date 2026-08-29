@@ -9,27 +9,31 @@ import { useEffect, useState } from "react";
 
 import { readResume, writeResume } from "@/rpc";
 
+/// What a step edited: the bank (Master Store) or the placed resume.
+export type StepKind = "store" | "resume";
+
 export interface Step {
   undo: () => Promise<unknown>;
   redo: () => Promise<unknown>;
+  kind: StepKind;
 }
 
 const past: Step[] = [];
 const future: Step[] = [];
-const listeners = new Set<() => void>();
+const listeners = new Set<(kind: StepKind) => void>();
 
 /// Limits how far back the stack keeps documents, which are whole files.
 const DEPTH = 50;
 
-function announce() {
-  for (const listener of listeners) listener();
+function announce(kind: StepKind) {
+  for (const listener of listeners) listener(kind);
 }
 
 export function push(step: Step): void {
   past.push(step);
   if (past.length > DEPTH) past.shift();
   future.length = 0;
-  announce();
+  announce(step.kind);
 }
 
 /// Runs a resume edit and records how to put the document back.
@@ -40,6 +44,7 @@ export async function resumeStep<T>(action: () => Promise<T>): Promise<T> {
   push({
     undo: () => writeResume(before),
     redo: () => writeResume(after),
+    kind: "resume",
   });
   return result;
 }
@@ -50,7 +55,7 @@ export async function step<T>(
   undo: () => Promise<unknown>,
 ): Promise<T> {
   const result = await action();
-  push({ undo, redo: action });
+  push({ undo, redo: action, kind: "store" });
   return result;
 }
 
@@ -58,18 +63,18 @@ export async function undo(): Promise<void> {
   const held = past.pop();
   if (!held) return;
   future.push(held);
-  announce();
+  announce(held.kind);
   await held.undo();
-  announce();
+  announce(held.kind);
 }
 
 export async function redo(): Promise<void> {
   const held = future.pop();
   if (!held) return;
   past.push(held);
-  announce();
+  announce(held.kind);
   await held.redo();
-  announce();
+  announce(held.kind);
 }
 
 /// Re-renders on every change to the stack, and after each undo or redo lands.
@@ -108,12 +113,15 @@ export function useHistoryShortcuts(): void {
   }, []);
 }
 
-/// Runs `reload` whenever an undo or redo changes what is on disk.
-export function useReloadOnHistory(reload: () => void): void {
+/// Runs `reload` whenever a step of `kind` lands, undoes, or redoes — everything by default.
+export function useReloadOnHistory(reload: () => void, kind?: StepKind): void {
   useEffect(() => {
-    listeners.add(reload);
-    return () => {
-      listeners.delete(reload);
+    const listener = (announced: StepKind) => {
+      if (kind === undefined || announced === kind) reload();
     };
-  }, [reload]);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, [reload, kind]);
 }
