@@ -122,8 +122,39 @@ pub fn connect_github(source: &str, destination: &Path) -> Result<PathBuf, Works
         &["repo", "clone", source, &destination.to_string_lossy()],
         &parent,
     )?;
+    materialize_remote_branches(destination)?;
 
     Ok(destination.to_path_buf())
+}
+
+/// Creates a local branch for every `origin` branch that does not already have one.
+fn materialize_remote_branches(repository_path: &Path) -> Result<(), WorkspaceError> {
+    let listed = run(
+        "git",
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/origin/",
+        ],
+        repository_path,
+    )?;
+
+    for remote_branch in listed.lines() {
+        let Some(name) = remote_branch.strip_prefix("origin/") else {
+            continue;
+        };
+        if name.is_empty() || name == "HEAD" {
+            continue;
+        }
+        // A local branch of this name may already exist (the default branch `gh repo clone`
+        // checked out); that failure is expected and silently ignored.
+        let _ = Command::new("git")
+            .args(["branch", name, remote_branch])
+            .current_dir(repository_path)
+            .output();
+    }
+
+    Ok(())
 }
 
 /// Whether `destination` already holds a clone of `source`.
@@ -322,6 +353,127 @@ pub fn repository_slug(remote_url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    fn git(args: &[&str], directory: &Path) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(directory)
+            .status()
+            .expect("git should run");
+        assert!(status.success(), "git {args:?} failed in {directory:?}");
+    }
+
+    fn local_branches(repository_path: &Path) -> Vec<String> {
+        let output = Command::new("git")
+            .args(["branch", "--format=%(refname:short)"])
+            .current_dir(repository_path)
+            .output()
+            .expect("git branch should run");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn materializing_creates_a_local_branch_per_remote_branch() {
+        let remote_dir = TempDir::new().unwrap();
+        git(&["init", "--bare", "-q", "-b", "main"], remote_dir.path());
+
+        let seed_dir = TempDir::new().unwrap();
+        git(
+            &["clone", "-q", &remote_dir.path().to_string_lossy(), "."],
+            seed_dir.path(),
+        );
+        git(
+            &["config", "user.email", "test@example.com"],
+            seed_dir.path(),
+        );
+        git(&["config", "user.name", "Test"], seed_dir.path());
+        std::fs::write(seed_dir.path().join("resume.yaml"), "cv: {}\n").unwrap();
+        git(&["add", "resume.yaml"], seed_dir.path());
+        git(&["commit", "-q", "-m", "seed"], seed_dir.path());
+        git(&["push", "-q", "origin", "main"], seed_dir.path());
+        git(
+            &["checkout", "-q", "-b", "archetype/frontend"],
+            seed_dir.path(),
+        );
+        git(
+            &["push", "-q", "origin", "archetype/frontend"],
+            seed_dir.path(),
+        );
+        git(
+            &["checkout", "-q", "-b", "apply/frontend/vercel"],
+            seed_dir.path(),
+        );
+        git(
+            &["push", "-q", "origin", "apply/frontend/vercel"],
+            seed_dir.path(),
+        );
+
+        let clone_dir = TempDir::new().unwrap();
+        git(
+            &[
+                "clone",
+                "-q",
+                &remote_dir.path().to_string_lossy(),
+                &clone_dir.path().to_string_lossy(),
+            ],
+            seed_dir.path(),
+        );
+        assert_eq!(local_branches(clone_dir.path()), vec!["main".to_string()]);
+
+        materialize_remote_branches(clone_dir.path()).unwrap();
+
+        let mut branches = local_branches(clone_dir.path());
+        branches.sort();
+        assert_eq!(
+            branches,
+            vec![
+                "apply/frontend/vercel".to_string(),
+                "archetype/frontend".to_string(),
+                "main".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn materializing_twice_is_a_no_op_on_the_second_pass() {
+        let remote_dir = TempDir::new().unwrap();
+        git(&["init", "--bare", "-q", "-b", "main"], remote_dir.path());
+
+        let seed_dir = TempDir::new().unwrap();
+        git(
+            &["clone", "-q", &remote_dir.path().to_string_lossy(), "."],
+            seed_dir.path(),
+        );
+        git(
+            &["config", "user.email", "test@example.com"],
+            seed_dir.path(),
+        );
+        git(&["config", "user.name", "Test"], seed_dir.path());
+        std::fs::write(seed_dir.path().join("resume.yaml"), "cv: {}\n").unwrap();
+        git(&["add", "resume.yaml"], seed_dir.path());
+        git(&["commit", "-q", "-m", "seed"], seed_dir.path());
+        git(&["push", "-q", "origin", "main"], seed_dir.path());
+
+        let clone_dir = TempDir::new().unwrap();
+        git(
+            &[
+                "clone",
+                "-q",
+                &remote_dir.path().to_string_lossy(),
+                &clone_dir.path().to_string_lossy(),
+            ],
+            seed_dir.path(),
+        );
+
+        materialize_remote_branches(clone_dir.path()).unwrap();
+        materialize_remote_branches(clone_dir.path()).unwrap();
+
+        assert_eq!(local_branches(clone_dir.path()), vec!["main".to_string()]);
+    }
 
     #[test]
     fn an_https_remote_names_owner_and_repository() {
