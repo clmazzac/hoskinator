@@ -589,6 +589,32 @@ export function branchName(slug: string, target: string | null): Promise<string>
   return call<string>("workspace.names", [slug, target]);
 }
 
+export interface GoogleStatus {
+  connected: boolean;
+  account_email: string | null;
+}
+
+export function googleStatus(): Promise<GoogleStatus> {
+  return call<GoogleStatus>("google.status", []);
+}
+
+/** Stores the user's own Google Cloud OAuth client id and secret. */
+export function setGoogleCredentials(
+  clientId: string | null,
+  clientSecret: string | null,
+): Promise<boolean> {
+  return call<boolean>("google.set_credentials", [clientId, clientSecret]);
+}
+
+/** Starts a connection: answers with the URL to open in a new tab. */
+export function beginGoogleAuth(): Promise<string> {
+  return call<string>("google.begin_auth", []);
+}
+
+export function disconnectGoogle(): Promise<boolean> {
+  return call<boolean>("google.disconnect", []);
+}
+
 export function repositoryState(): Promise<RepositoryState> {
   return call<RepositoryState>("repository.init", []);
 }

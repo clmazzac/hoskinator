@@ -98,6 +98,7 @@ Decisions that apply across the whole repo, newest last. Decisions scoped to one
 | Workspace (branches, GitHub, applications) | `docs/decisions/workspace.md` |
 | Tailoring (resume-vs-JD scoring) | `docs/decisions/tailoring.md` |
 | Braindump and bullet suggestions | `docs/decisions/braindump.md` |
+| Google Sheets sync | `docs/decisions/google-sync.md` |
 
 ### Layout: Cargo workspace at the repo root (Slice 1, #2)
 
