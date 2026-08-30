@@ -119,6 +119,8 @@ fn router(
             pending_google_auth.clone(),
             google_accounts.clone(),
             google_redirect_uri.clone(),
+            Arc::clone(&store),
+            active.clone(),
         )
         .into_rpc(),
     )?;

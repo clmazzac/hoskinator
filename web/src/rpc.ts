@@ -615,6 +615,18 @@ export function disconnectGoogle(): Promise<boolean> {
   return call<boolean>("google.disconnect", []);
 }
 
+export interface SyncOutcome {
+  pulled: number;
+  created_locally: number;
+  pushed_cells: number;
+  appended_to_sheet: number;
+}
+
+/** Reconciles the linked sheet against the active repository's applications, right now. */
+export function syncGoogleSheetNow(): Promise<SyncOutcome> {
+  return call<SyncOutcome>("google.sync_now", []);
+}
+
 export function repositoryState(): Promise<RepositoryState> {
   return call<RepositoryState>("repository.init", []);
 }

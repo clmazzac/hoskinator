@@ -11,6 +11,7 @@ pub mod bullet;
 pub mod config;
 pub mod entry;
 pub mod google_auth;
+pub mod google_sheets;
 pub mod home;
 pub mod job_description;
 pub mod lineage;
