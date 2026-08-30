@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "ai")]
 use hoskinator_ai::{Assessment, DraftBullet};
@@ -373,6 +373,12 @@ pub trait WorkspaceRpc {
 pub struct GoogleStatus {
     pub connected: bool,
     pub account_email: Option<String>,
+    /// Whether the daemon keeps the linked sheet reconciled automatically in the background.
+    pub sync_enabled: bool,
+    /// Unix seconds of the last successful automatic sync, if any.
+    pub last_synced_at: Option<u64>,
+    /// What the last automatic sync attempt failed with, if it did.
+    pub last_sync_error: Option<String>,
 }
 
 #[rpc(server, client)]
@@ -400,6 +406,10 @@ pub trait GoogleRpc {
     /// Reconciles the linked sheet against the active repository's applications, right now.
     #[method(name = "google.sync_now")]
     async fn google_sync_now(&self) -> RpcResult<SyncOutcome>;
+
+    /// Starts or stops the background loop that reconciles the linked sheet every 30s.
+    #[method(name = "google.set_sync_enabled")]
+    async fn google_set_sync_enabled(&self, enabled: bool) -> RpcResult<bool>;
 }
 
 #[rpc(server, client)]
@@ -604,6 +614,142 @@ impl GoogleAccountCache {
             .0
             .write()
             .expect("Google account cache lock was poisoned") = email;
+    }
+}
+
+/// How often the background sync loop reconciles the linked sheet, once enabled.
+const SYNC_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+/// The `owner/name` of the resume repository currently active, used to scope applications —
+/// `None` when no repository is active or it has no GitHub remote yet.
+async fn active_repository_scope(active: &ActiveRepository) -> Option<String> {
+    let path = active.get()?;
+    tokio::task::spawn_blocking(move || {
+        workspace::remote(&path).and_then(|url| workspace::repository_slug(&url))
+    })
+    .await
+    .ok()?
+}
+
+#[derive(Default)]
+struct SyncStatusInner {
+    last_synced_at: Option<u64>,
+    last_error: Option<String>,
+}
+
+/// What the background sync loop last did, cached in memory so `google.status` has something to
+/// show without polling logs. Cleared on a fresh daemon start, same as `GoogleAccountCache`.
+#[derive(Clone, Default)]
+pub struct SyncStatusCache(Arc<RwLock<SyncStatusInner>>);
+
+impl SyncStatusCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn record_success(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        let mut inner = self.0.write().expect("sync status lock was poisoned");
+        inner.last_synced_at = Some(now);
+        inner.last_error = None;
+    }
+
+    fn record_error(&self, message: String) {
+        self.0
+            .write()
+            .expect("sync status lock was poisoned")
+            .last_error = Some(message);
+    }
+
+    fn get(&self) -> (Option<u64>, Option<String>) {
+        let inner = self.0.read().expect("sync status lock was poisoned");
+        (inner.last_synced_at, inner.last_error.clone())
+    }
+}
+
+/// Owns the background sync loop's task, if one is running.
+#[derive(Clone, Default)]
+pub struct SyncTaskHandle(Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>);
+
+impl SyncTaskHandle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Starts the loop, replacing any already running (so re-enabling picks up fresh
+    /// credentials rather than leaving a stale task in place).
+    pub(crate) fn start(
+        &self,
+        store: Arc<Store>,
+        active: ActiveRepository,
+        status: SyncStatusCache,
+    ) {
+        self.stop();
+        let handle = tokio::spawn(sync_loop(store, active, status));
+        *self.0.write().expect("sync task lock was poisoned") = Some(handle);
+    }
+
+    pub(crate) fn stop(&self) {
+        if let Some(handle) = self.0.write().expect("sync task lock was poisoned").take() {
+            handle.abort();
+        }
+    }
+}
+
+/// Reconciles the linked sheet every [`SYNC_POLL_INTERVAL`] until aborted. A tick with nothing
+/// to sync against (no account connected, no sheet linked, no active repository) is skipped
+/// silently rather than treated as an error — any of those is a normal, temporary state (mid
+/// disconnect, no repository open yet) that the next tick may no longer be in.
+async fn sync_loop(store: Arc<Store>, active: ActiveRepository, status: SyncStatusCache) {
+    let mut ticker = tokio::time::interval(SYNC_POLL_INTERVAL);
+    loop {
+        ticker.tick().await;
+
+        let Ok(config) = hoskinator_core::home::Home::config() else {
+            continue;
+        };
+        let (Some(client_id), Some(client_secret), Some(refresh_token)) = (
+            config.google_client_id,
+            config.google_client_secret,
+            config.google_refresh_token,
+        ) else {
+            continue;
+        };
+        let Some(spreadsheet_id) = config.applications_sheet else {
+            continue;
+        };
+        let Some(repository) = active_repository_scope(&active).await else {
+            continue;
+        };
+
+        let access_token = match tokio::task::spawn_blocking(move || {
+            google_auth::refresh_access_token(&client_id, &client_secret, &refresh_token)
+        })
+        .await
+        {
+            Ok(Ok(tokens)) => tokens.access_token,
+            Ok(Err(error)) => {
+                status.record_error(source_message(&error));
+                continue;
+            }
+            Err(_) => continue,
+        };
+
+        match google_sheets::reconcile(
+            &store,
+            &repository,
+            google_sheets::SHEETS_API,
+            &access_token,
+            &spreadsheet_id,
+        )
+        .await
+        {
+            Ok(_) => status.record_success(),
+            Err(error) => status.record_error(source_message(&error)),
+        }
     }
 }
 
@@ -1797,6 +1943,8 @@ pub struct GoogleAuthApi {
     redirect_uri: String,
     store: Arc<Store>,
     repository_path: ActiveRepository,
+    sync_task: SyncTaskHandle,
+    sync_status: SyncStatusCache,
 }
 
 impl GoogleAuthApi {
@@ -1806,6 +1954,8 @@ impl GoogleAuthApi {
         redirect_uri: String,
         store: Arc<Store>,
         repository_path: ActiveRepository,
+        sync_task: SyncTaskHandle,
+        sync_status: SyncStatusCache,
     ) -> Self {
         Self {
             pending,
@@ -1813,6 +1963,8 @@ impl GoogleAuthApi {
             redirect_uri,
             store,
             repository_path,
+            sync_task,
+            sync_status,
         }
     }
 
@@ -1825,16 +1977,9 @@ impl GoogleAuthApi {
     /// The `owner/name` of the resume repository currently active, used to scope applications —
     /// same lookup as `ApplicationApi::repository_scope`.
     async fn repository_scope(&self) -> RpcResult<String> {
-        let path = self
-            .repository_path
-            .get()
-            .ok_or_else(applications_unavailable)?;
-        tokio::task::spawn_blocking(move || {
-            workspace::remote(&path).and_then(|url| workspace::repository_slug(&url))
-        })
-        .await
-        .map_err(|error| ErrorObjectOwned::owned(APPLICATION_IO, error.to_string(), None::<()>))?
-        .ok_or_else(applications_unavailable)
+        active_repository_scope(&self.repository_path)
+            .await
+            .ok_or_else(applications_unavailable)
     }
 }
 
@@ -1842,16 +1987,24 @@ impl GoogleAuthApi {
 impl GoogleRpcServer for GoogleAuthApi {
     async fn google_status(&self) -> RpcResult<GoogleStatus> {
         let config = Self::config()?;
+        let sync_enabled = config.google_sync_enabled.unwrap_or(false);
+        let (last_synced_at, last_sync_error) = self.sync_status.get();
         if config.google_refresh_token.is_none() {
             return Ok(GoogleStatus {
                 connected: false,
                 account_email: None,
+                sync_enabled,
+                last_synced_at,
+                last_sync_error,
             });
         }
         if let Some(account_email) = self.accounts.get() {
             return Ok(GoogleStatus {
                 connected: true,
                 account_email: Some(account_email),
+                sync_enabled,
+                last_synced_at,
+                last_sync_error,
             });
         }
 
@@ -1866,6 +2019,9 @@ impl GoogleRpcServer for GoogleAuthApi {
                 return Ok(GoogleStatus {
                     connected: true,
                     account_email: None,
+                    sync_enabled,
+                    last_synced_at,
+                    last_sync_error: last_sync_error.clone(),
                 });
             };
             let tokens =
@@ -1875,6 +2031,9 @@ impl GoogleRpcServer for GoogleAuthApi {
             Ok(GoogleStatus {
                 connected: true,
                 account_email,
+                sync_enabled,
+                last_synced_at,
+                last_sync_error,
             })
         })
         .await
@@ -1914,13 +2073,16 @@ impl GoogleRpcServer for GoogleAuthApi {
 
     async fn google_disconnect(&self) -> RpcResult<bool> {
         self.accounts.set(None);
+        self.sync_task.stop();
         google_blocking(move || {
             if let Some(config_path) = hoskinator_core::home::config_file_path() {
                 google_auth::remember_refresh_token(&config_path, None)?;
             }
             Ok(true)
         })
-        .await
+        .await?;
+        remember_sync_enabled(None).await?;
+        Ok(true)
     }
 
     async fn google_sync_now(&self) -> RpcResult<SyncOutcome> {
@@ -1964,6 +2126,33 @@ impl GoogleRpcServer for GoogleAuthApi {
             ErrorObjectOwned::owned(GOOGLE_SHEETS_SYNC, source_message(&error), None::<()>)
         })
     }
+
+    async fn google_set_sync_enabled(&self, enabled: bool) -> RpcResult<bool> {
+        remember_sync_enabled(Some(enabled)).await?;
+        if enabled {
+            self.sync_task.start(
+                Arc::clone(&self.store),
+                self.repository_path.clone(),
+                self.sync_status.clone(),
+            );
+        } else {
+            self.sync_task.stop();
+        }
+        Ok(enabled)
+    }
+}
+
+/// Persists `google_sync_enabled`, mapping a write failure onto the Google error code.
+async fn remember_sync_enabled(enabled: Option<bool>) -> RpcResult<()> {
+    tokio::task::spawn_blocking(move || {
+        if let Some(config_path) = hoskinator_core::home::config_file_path() {
+            hoskinator_core::config::remember_google_sync_enabled(&config_path, enabled)?;
+        }
+        Ok::<(), hoskinator_core::config::ConfigError>(())
+    })
+    .await
+    .map_err(|error| ErrorObjectOwned::owned(GOOGLE_AUTH, error.to_string(), None::<()>))?
+    .map_err(|error| ErrorObjectOwned::owned(GOOGLE_AUTH, source_message(&error), None::<()>))
 }
 
 /// Runs a blocking Google OAuth call and maps its failure onto a JSON-RPC error.

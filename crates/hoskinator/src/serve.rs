@@ -21,8 +21,8 @@ use crate::rpc::{
     EntryRpcServer, GoogleAccountCache, GoogleAuthApi, GoogleRpcServer, JobDescriptionApi,
     JobDescriptionRpcServer, PendingGoogleAuth, ProfileApi, ProfileRpcServer, RenderApi,
     RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi, ResumeRepositoryProvider,
-    ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer, WorkspaceApi,
-    WorkspaceRpcServer,
+    ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer, SyncStatusCache,
+    SyncTaskHandle, WorkspaceApi, WorkspaceRpcServer,
 };
 #[cfg(feature = "ai")]
 use crate::rpc::{AiApi, AiRpcServer};
@@ -102,6 +102,13 @@ fn router(
     let pending_google_auth = PendingGoogleAuth::new();
     let google_accounts = GoogleAccountCache::new();
     let google_redirect_uri = format!("http://127.0.0.1:{port}{GOOGLE_CALLBACK_PATH}");
+    let sync_task = SyncTaskHandle::new();
+    let sync_status = SyncStatusCache::new();
+    // Re-reads config rather than taking it as a parameter, matching how every other `google.*`
+    // method reads it fresh — cheap, and keeps `router`'s signature untouched by this feature.
+    if Home::config().is_ok_and(|config| config.google_sync_enabled.unwrap_or(false)) {
+        sync_task.start(Arc::clone(&store), active.clone(), sync_status.clone());
+    }
 
     let mut module = RpcModule::new(());
     module.merge(ProfileApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
@@ -121,6 +128,8 @@ fn router(
             google_redirect_uri.clone(),
             Arc::clone(&store),
             active.clone(),
+            sync_task,
+            sync_status,
         )
         .into_rpc(),
     )?;

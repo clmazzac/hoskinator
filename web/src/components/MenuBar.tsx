@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 
 import ApiKeyDialog from "@/components/ApiKeyDialog";
-import GoogleAccountDialog from "@/components/GoogleAccountDialog";
 import NewEntryDialog from "@/components/NewEntryDialog";
 import NewSectionDialog from "@/components/NewSectionDialog";
 import { Button } from "@/components/ui/button";
@@ -63,7 +62,6 @@ export default function MenuBar({
   const [creatingEntry, setCreatingEntry] = useState(false);
   const [creatingSection, setCreatingSection] = useState(false);
   const [settingApiKey, setSettingApiKey] = useState(false);
-  const [connectingGoogle, setConnectingGoogle] = useState(false);
 
   useEffect(() => {
     resumeThemes().then(setStyles, () => setStyles([]));
@@ -277,18 +275,6 @@ export default function MenuBar({
         <KeyRound className="size-3.5" />
       </Button>
       <ApiKeyDialog open={settingApiKey} onOpenChange={setSettingApiKey} />
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-6"
-        onClick={() => setConnectingGoogle(true)}
-        aria-label="Google Sheets sync"
-        title="Google Sheets sync"
-      >
-        <Sheet className="size-3.5" />
-      </Button>
-      <GoogleAccountDialog open={connectingGoogle} onOpenChange={setConnectingGoogle} />
 
       <Button
         variant="ghost"

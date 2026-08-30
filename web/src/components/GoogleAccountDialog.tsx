@@ -11,12 +11,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   beginGoogleAuth,
   disconnectGoogle,
   googleStatus,
   linkSheet,
   setGoogleCredentials,
+  setGoogleSyncEnabled,
   syncGoogleSheetNow,
   workspaceStatus,
   type GoogleStatus,
@@ -111,7 +113,13 @@ export default function GoogleAccountDialog({
     disconnectGoogle().then(
       () => {
         setBusy(false);
-        setStatus({ connected: false, account_email: null });
+        setStatus({
+          connected: false,
+          account_email: null,
+          sync_enabled: false,
+          last_synced_at: null,
+          last_sync_error: null,
+        });
       },
       (failure: Error) => {
         setBusy(false);
@@ -133,6 +141,14 @@ export default function GoogleAccountDialog({
         setLinking(false);
         setError(failure.message);
       },
+    );
+  };
+
+  const toggleSync = (enabled: boolean) => {
+    setError(null);
+    setGoogleSyncEnabled(enabled).then(
+      () => setStatus((previous) => previous && { ...previous, sync_enabled: enabled }),
+      (failure: Error) => setError(failure.message),
     );
   };
 
@@ -171,6 +187,28 @@ export default function GoogleAccountDialog({
             <p className="font-mono text-xs text-muted-foreground">
               pulled {syncOutcome.pulled} · pushed {syncOutcome.pushed_cells} cells · created{" "}
               {syncOutcome.created_locally} · appended {syncOutcome.appended_to_sheet}
+            </p>
+          )}
+          {status?.connected && (
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="google-sync-enabled" className="text-xs font-normal">
+                Keep the sheet in sync automatically
+              </Label>
+              <Switch
+                id="google-sync-enabled"
+                size="sm"
+                checked={status.sync_enabled}
+                onCheckedChange={toggleSync}
+              />
+            </div>
+          )}
+          {status?.sync_enabled && (
+            <p className="font-mono text-xs text-muted-foreground">
+              {status.last_sync_error
+                ? `last sync failed: ${status.last_sync_error}`
+                : status.last_synced_at
+                  ? `last synced ${new Date(status.last_synced_at * 1000).toLocaleTimeString()}`
+                  : "not synced yet"}
             </p>
           )}
 
