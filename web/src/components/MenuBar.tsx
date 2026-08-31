@@ -4,12 +4,10 @@ import {
   FilePlus2,
   FolderPlus,
   GitBranch,
-  Home,
   KeyRound,
   Moon,
   Plus,
   Redo2,
-  Sheet,
   Sun,
   Undo2,
 } from "lucide-react";
@@ -26,23 +24,16 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useHistory, useHistoryShortcuts } from "@/lib/history";
-import { go } from "@/lib/route";
 import { isDark, setDark } from "@/lib/theme";
 import {
-  checkoutBranch,
   repositoryState,
   resumeDesign,
   resumeThemes,
   setResumeTheme,
   setTopNote,
-  workspaceStatus,
-  type Branch,
   type Design,
 } from "@/rpc";
 
@@ -57,8 +48,6 @@ export default function MenuBar({
   const [design, setDesign] = useState<Design | null>(null);
   const [styles, setStyles] = useState<string[]>([]);
   const [branch, setBranch] = useState<string | null>(null);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [sheet, setSheet] = useState<string | null>(null);
   const [creatingEntry, setCreatingEntry] = useState(false);
   const [creatingSection, setCreatingSection] = useState(false);
   const [settingApiKey, setSettingApiKey] = useState(false);
@@ -67,26 +56,10 @@ export default function MenuBar({
     resumeThemes().then(setStyles, () => setStyles([]));
     resumeDesign().then(setDesign, () => setDesign(null));
     repositoryState().then(
-      (state) => {
-        setBranch(state.head?.branch ?? null);
-        setBranches(state.branches);
-      },
-      () => {
-        setBranch(null);
-        setBranches([]);
-      },
-    );
-    workspaceStatus().then(
-      (status) => setSheet(status.applications_sheet),
-      () => setSheet(null),
+      (state) => setBranch(state.head?.branch ?? null),
+      () => setBranch(null),
     );
   }, []);
-
-  // A full reload, not a local refresh: the outline, the render panel, and the bank all need to
-  // see the new branch's content, and none of them expose a way to be told from here.
-  const switchTo = (name: string) => {
-    checkoutBranch(name).then(() => window.location.reload());
-  };
 
   const revise = (next: Design, write: Promise<unknown>) => {
     const previous = design;
@@ -105,16 +78,6 @@ export default function MenuBar({
 
   return (
     <div className="flex h-8 shrink-0 items-center gap-0.5 border-b px-1">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-6 gap-1 px-2 text-xs font-normal"
-        onClick={() => go("home")}
-        title="Back to your resumes"
-      >
-        <Home className="size-3.5" />
-      </Button>
-
       <Button
         variant="ghost"
         size="sm"
@@ -139,54 +102,13 @@ export default function MenuBar({
       </Button>
 
       {branch && (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-2 h-6 min-w-0 gap-1 px-2 text-xs font-normal"
-                title={`Editing ${branch}`}
-              >
-                <GitBranch className="size-3.5 shrink-0" />
-                <span className="max-w-64 truncate font-mono text-[11px]">{branch}</span>
-                <ChevronDown className="size-3" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="start" className="min-w-56">
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger className="text-xs">
-                <GitBranch className="size-3.5" />
-                Switch resume
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-72 overflow-auto">
-                {branches
-                  .filter((candidate) => candidate.name !== branch)
-                  .map((candidate) => (
-                    <DropdownMenuItem
-                      key={candidate.name}
-                      className="font-mono text-xs"
-                      onClick={() => switchTo(candidate.name)}
-                    >
-                      {candidate.name}
-                    </DropdownMenuItem>
-                  ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-xs"
-              disabled={!sheet}
-              onClick={() => {
-                if (sheet) window.open(`https://docs.google.com/spreadsheets/d/${sheet}/edit`, "_blank");
-              }}
-            >
-              <Sheet className="size-3.5" />
-              {sheet ? "Open the application sheet" : "No sheet linked"}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <span
+          className="ml-2 flex h-6 min-w-0 items-center gap-1 px-2 text-xs font-normal text-muted-foreground"
+          title={`Editing ${branch}`}
+        >
+          <GitBranch className="size-3.5 shrink-0" />
+          <span className="max-w-64 truncate font-mono text-[11px]">{branch}</span>
+        </span>
       )}
       {branch && (
         <DropdownMenu>
