@@ -28,6 +28,8 @@ pub struct Config {
     pub google_client_secret: Option<String>,
     /// The refresh token from completing Google's consent flow. Plaintext on disk, mode 0600.
     pub google_refresh_token: Option<String>,
+    /// Whether the daemon keeps the linked sheet reconciled automatically in the background.
+    pub google_sync_enabled: Option<bool>,
 }
 
 /// A configuration file exists but could not be used, or could not be written.
@@ -79,9 +81,23 @@ impl Config {
     }
 }
 
-/// Rewrites `key`'s line in `config_path` to `value`, or removes the line when `value` is
-/// `None`. Keeps every other line as is, and restricts the file to its owner on Unix.
+/// Rewrites `key`'s line in `config_path` to the quoted string `value`, or removes the line when
+/// `value` is `None`. Keeps every other line as is, and restricts the file to its owner on Unix.
 pub(crate) fn remember_key(
+    config_path: &Path,
+    key: &str,
+    value: Option<&str>,
+) -> std::io::Result<()> {
+    remember_raw_key(
+        config_path,
+        key,
+        value.map(|value| format!("\"{value}\"")).as_deref(),
+    )
+}
+
+/// As [`remember_key`], but `value` is written verbatim rather than quoted — for a TOML value
+/// that is not a string, such as a boolean.
+pub(crate) fn remember_raw_key(
     config_path: &Path,
     key: &str,
     value: Option<&str>,
@@ -97,7 +113,7 @@ pub(crate) fn remember_key(
         written.push('\n');
     }
     if let Some(value) = value {
-        written.push_str(&format!("{key} = \"{value}\"\n"));
+        written.push_str(&format!("{key} = {value}\n"));
     }
 
     if let Some(parent) = config_path.parent() {
@@ -114,6 +130,22 @@ pub fn remember_anthropic_api_key(
     key: Option<&str>,
 ) -> Result<(), ConfigError> {
     remember_key(config_path, "anthropic_api_key", key).map_err(|source| ConfigError::Write {
+        path: config_path.to_path_buf(),
+        source,
+    })
+}
+
+/// Writes or clears `google_sync_enabled` in the config file, keeping anything else already set.
+pub fn remember_google_sync_enabled(
+    config_path: &Path,
+    enabled: Option<bool>,
+) -> Result<(), ConfigError> {
+    remember_raw_key(
+        config_path,
+        "google_sync_enabled",
+        enabled.map(|enabled| enabled.to_string()).as_deref(),
+    )
+    .map_err(|source| ConfigError::Write {
         path: config_path.to_path_buf(),
         source,
     })
@@ -231,6 +263,38 @@ mod tests {
         remember_anthropic_api_key(&config, None).unwrap();
 
         assert_eq!(Config::load(&config).unwrap().anthropic_api_key, None);
+    }
+
+    #[test]
+    fn remembering_a_bool_writes_it_unquoted_and_keeps_other_keys() {
+        let dir = TempDir::new().unwrap();
+        let config = dir.path().join("config.toml");
+        std::fs::write(&config, "resume_repo = \"/srv/resume\"\n").unwrap();
+
+        remember_google_sync_enabled(&config, Some(true)).unwrap();
+
+        let written = std::fs::read_to_string(&config).unwrap();
+        assert!(written.contains("google_sync_enabled = true"));
+        assert!(!written.contains("google_sync_enabled = \"true\""));
+        assert_eq!(
+            Config::load(&config).unwrap().google_sync_enabled,
+            Some(true)
+        );
+        assert_eq!(
+            Config::load(&config).unwrap().resume_repo,
+            Some(PathBuf::from("/srv/resume"))
+        );
+    }
+
+    #[test]
+    fn remembering_none_clears_the_bool() {
+        let dir = TempDir::new().unwrap();
+        let config = dir.path().join("config.toml");
+        remember_google_sync_enabled(&config, Some(true)).unwrap();
+
+        remember_google_sync_enabled(&config, None).unwrap();
+
+        assert_eq!(Config::load(&config).unwrap().google_sync_enabled, None);
     }
 
     #[cfg(unix)]

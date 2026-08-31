@@ -592,6 +592,9 @@ export function branchName(slug: string, target: string | null): Promise<string>
 export interface GoogleStatus {
   connected: boolean;
   account_email: string | null;
+  sync_enabled: boolean;
+  last_synced_at: number | null;
+  last_sync_error: string | null;
 }
 
 export function googleStatus(): Promise<GoogleStatus> {
@@ -625,6 +628,11 @@ export interface SyncOutcome {
 /** Reconciles the linked sheet against the active repository's applications, right now. */
 export function syncGoogleSheetNow(): Promise<SyncOutcome> {
   return call<SyncOutcome>("google.sync_now", []);
+}
+
+/** Starts or stops the background loop that reconciles the linked sheet every 30s. */
+export function setGoogleSyncEnabled(enabled: boolean): Promise<boolean> {
+  return call<boolean>("google.set_sync_enabled", [enabled]);
 }
 
 export function repositoryState(): Promise<RepositoryState> {

@@ -6,11 +6,13 @@ import {
   Download,
   ExternalLink,
   Plus,
+  Sheet as SheetIcon,
   Upload,
   X,
 } from "lucide-react";
 
 import EditableText from "@/components/EditableText";
+import GoogleAccountDialog from "@/components/GoogleAccountDialog";
 import SheetImport from "@/components/SheetImport";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,9 +28,12 @@ import {
   applicationStatuses,
   createApplication,
   deleteApplication,
+  googleStatus,
+  syncGoogleSheetNow,
   updateApplication,
   type Application,
   type Branch,
+  type GoogleStatus,
   type NewApplication,
 } from "@/rpc";
 
@@ -130,10 +135,26 @@ export default function ApplicationTracker({
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" } | null>(null);
+  const [googleSync, setGoogleSync] = useState<GoogleStatus | null>(null);
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
+
+  const refreshGoogleSync = () => googleStatus().then(setGoogleSync, () => setGoogleSync(null));
 
   useEffect(() => {
     applicationStatuses().then(setStatuses, () => setStatuses([]));
+    refreshGoogleSync();
   }, []);
+
+  // Every local edit below funnels through here: refreshes the sync status display, and, with
+  // auto-sync on, pushes to the sheet immediately instead of waiting for the next background tick.
+  const notifyChanged = () => {
+    onChanged();
+    if (googleSync?.sync_enabled) {
+      syncGoogleSheetNow().then(refreshGoogleSync, refreshGoogleSync);
+    } else {
+      refreshGoogleSync();
+    }
+  };
 
   const toggleSort = (key: SortKey) =>
     setSort((prev) =>
@@ -165,12 +186,12 @@ export default function ApplicationTracker({
 
   const save = (application: Application, changes: Partial<NewApplication>) =>
     updateApplication(application.id, { ...fields(application), ...changes }).then(
-      onChanged,
+      notifyChanged,
       (failure: Error) => setError(failure.message),
     );
 
   const add = () =>
-    createApplication(BLANK_APPLICATION).then(onChanged, (failure: Error) =>
+    createApplication(BLANK_APPLICATION).then(notifyChanged, (failure: Error) =>
       setError(failure.message),
     );
 
@@ -194,6 +215,42 @@ export default function ApplicationTracker({
         </div>
 
         <span className="flex-1" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 text-xs"
+          onClick={() => setConnectingGoogle(true)}
+          title="Google Sheets sync"
+        >
+          <span
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              !googleSync?.connected
+                ? "bg-muted-foreground"
+                : googleSync.last_sync_error
+                  ? "bg-status-rejected"
+                  : googleSync.sync_enabled
+                    ? "bg-status-offer"
+                    : "bg-status-applied",
+            )}
+          />
+          <SheetIcon className="size-3.5" />
+          {!googleSync?.connected
+            ? "Sheet"
+            : googleSync.last_sync_error
+              ? "Sync failed"
+              : googleSync.sync_enabled
+                ? "Synced"
+                : "Connected"}
+        </Button>
+        <GoogleAccountDialog
+          open={connectingGoogle}
+          onOpenChange={(open) => {
+            setConnectingGoogle(open);
+            if (!open) refreshGoogleSync();
+          }}
+        />
 
         <Button
           variant="ghost"
@@ -386,7 +443,7 @@ export default function ApplicationTracker({
                     title="Remove"
                     className="grid size-6 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
                     onClick={() =>
-                      deleteApplication(application.id).then(onChanged, (failure: Error) =>
+                      deleteApplication(application.id).then(notifyChanged, (failure: Error) =>
                         setError(failure.message),
                       )
                     }
@@ -415,7 +472,7 @@ export default function ApplicationTracker({
       <SheetImport
         open={importing}
         onOpenChange={setImporting}
-        onImported={onChanged}
+        onImported={notifyChanged}
       />
     </section>
   );
