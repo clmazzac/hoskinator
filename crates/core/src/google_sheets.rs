@@ -508,17 +508,41 @@ pub async fn reconcile(
     if rows.is_empty() {
         return Err(GoogleSheetsError::NoHeaderRow);
     }
-    let (header_at, _) = find_header_row(&rows)?;
-    let header = rows[header_at].clone();
+    let (header_at, columns) = find_header_row(&rows)?;
+    let mut header = rows[header_at].clone();
     let data_rows: Vec<Vec<String>> = rows[header_at + 1..].to_vec();
-
-    let plan = plan_reconciliation(&local, &header, &data_rows)?;
 
     let mut outcome = SyncOutcome::default();
     // Every phase below is independent — a failure in one (a malformed range, a dropped
     // connection) must not stop the others from running. Each records the first error it hits
     // and carries on, so a partial sync still applies everything it can.
     let mut first_error: Option<GoogleSheetsError> = None;
+
+    // A sheet with no Id column matches every row by company/position, which breaks down the
+    // moment two applications share both. Adding the column here means every row past this
+    // point matches unambiguously — plan_reconciliation backfills each row's Id the same way it
+    // already does for a sheet that had the column but left a row's cell blank.
+    if columns.id.is_none() {
+        let id_column = header.len();
+        let range = format!("{}{}", column_letter(id_column), header_at + 1);
+        let result = {
+            let endpoint = endpoint.to_string();
+            let access_token = access_token.to_string();
+            let spreadsheet_id = spreadsheet_id.to_string();
+            let value = "Id".to_string();
+            tokio::task::spawn_blocking(move || {
+                batch_write_cells(&endpoint, &access_token, &spreadsheet_id, &[(range, value)])
+            })
+            .await
+            .expect("writing the sheet should not panic")
+        };
+        match result {
+            Ok(()) => header.push("Id".to_string()),
+            Err(error) => drop(first_error.get_or_insert(error)),
+        }
+    }
+
+    let plan = plan_reconciliation(&local, &header, &data_rows)?;
 
     for application in &plan.to_create {
         match store.create_application(application, repository).await {
@@ -584,14 +608,17 @@ pub async fn reconcile(
     }
 }
 
-/// Clears a row's tracked-column cells from the linked sheet, matched by company and position —
-/// called when an application is deleted locally, so the next sync does not read its old row
-/// back as a brand-new application. A no-op if nothing matches, including an unrecognisable
-/// header: deleting locally must never fail because the sheet side had nothing to clean up.
+/// Clears a row's tracked-column cells from the linked sheet — called when an application is
+/// deleted locally, so the next sync does not read its old row back as a brand-new application.
+/// Matched by `application_id` against the Id column when the row has one, falling back to
+/// company and position for a row that predates it, and clearing only the first such match. A
+/// no-op if nothing matches, including an unrecognisable header: deleting locally must never fail
+/// because the sheet side had nothing to clean up.
 pub async fn remove_from_sheet(
     endpoint: &str,
     access_token: &str,
     spreadsheet_id: &str,
+    application_id: i64,
     company: &str,
     position: &str,
 ) -> Result<(), GoogleSheetsError> {
@@ -611,6 +638,22 @@ pub async fn remove_from_sheet(
 
     let company = company.trim();
     let position = position.trim();
+    let data_rows = &rows[header_at + 1..];
+
+    let by_id = columns.id.and_then(|id_column| {
+        data_rows
+            .iter()
+            .position(|row| cell(row, Some(id_column)).trim().parse::<i64>() == Ok(application_id))
+    });
+    let Some(matched_offset) = by_id.or_else(|| {
+        data_rows.iter().position(|row| {
+            cell(row, Some(columns.company)).trim() == company
+                && cell(row, Some(columns.position)).trim() == position
+        })
+    }) else {
+        return Ok(());
+    };
+
     let tracked_columns = [
         columns.id,
         Some(columns.company),
@@ -622,21 +665,12 @@ pub async fn remove_from_sheet(
         columns.notes,
         columns.jd_text,
     ];
-    let mut ranges = Vec::new();
-    for (offset, row) in rows[header_at + 1..].iter().enumerate() {
-        if cell(row, Some(columns.company)).trim() != company
-            || cell(row, Some(columns.position)).trim() != position
-        {
-            continue;
-        }
-        let absolute_row = header_at + 2 + offset;
-        for column in tracked_columns.into_iter().flatten() {
-            ranges.push(format!("{}{}", column_letter(column), absolute_row));
-        }
-    }
-    if ranges.is_empty() {
-        return Ok(());
-    }
+    let absolute_row = header_at + 2 + matched_offset;
+    let ranges: Vec<String> = tracked_columns
+        .into_iter()
+        .flatten()
+        .map(|column| format!("{}{}", column_letter(column), absolute_row))
+        .collect();
 
     let endpoint = endpoint.to_string();
     let access_token = access_token.to_string();
@@ -1064,7 +1098,35 @@ mod tests {
             .await;
 
         let endpoint = server.uri();
-        remove_from_sheet(&endpoint, "token", "sheet-1", "Acme", "Engineer")
+        remove_from_sheet(&endpoint, "token", "sheet-1", 1, "Acme", "Engineer")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn remove_from_sheet_falls_back_to_company_and_position_for_a_blank_id_cell() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sheet-1/values/A1:Z1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "values": [HEADER, ["", "Acme", "Engineer", "applied", "", "a note"]],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/sheet-1/values:batchClear"))
+            .and(body_json(serde_json::json!({
+                "ranges": ["A2", "B2", "C2", "D2", "E2", "F2"],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        remove_from_sheet(&endpoint, "token", "sheet-1", 1, "Acme", "Engineer")
             .await
             .unwrap();
     }
@@ -1086,8 +1148,77 @@ mod tests {
         // proves `remove_from_sheet` never made one.
 
         let endpoint = server.uri();
-        remove_from_sheet(&endpoint, "token", "sheet-1", "Initech", "PM")
+        remove_from_sheet(&endpoint, "token", "sheet-1", 99, "Initech", "PM")
             .await
             .unwrap();
+    }
+
+    async fn open_temp_store() -> (tempfile::TempDir, Store) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = Store::open(&dir.path().join("store.db")).await.unwrap();
+        (dir, store)
+    }
+
+    #[tokio::test]
+    async fn reconcile_adds_an_id_column_to_a_sheet_that_has_none() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let (_dir, store) = open_temp_store().await;
+        let application = store
+            .create_application(
+                &NewApplication {
+                    company: "Acme".to_string(),
+                    position: "Engineer".to_string(),
+                    status: "applied".to_string(),
+                    date_applied: None,
+                    listing_url: None,
+                    resume_branch: None,
+                    notes: None,
+                    jd_text: None,
+                },
+                "owner/repo",
+            )
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sheet-1/values/A1:Z1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "values": [
+                    ["Company", "Position", "Status"],
+                    ["Acme", "Engineer", "applied"],
+                ],
+            })))
+            .mount(&server)
+            .await;
+        // The header-cell write (adding "Id") and the row's backfilled Id both go through
+        // batchUpdate — assert on the header-cell one specifically; a mismatched call 404s.
+        Mock::given(method("POST"))
+            .and(path("/sheet-1/values:batchUpdate"))
+            .and(body_json(serde_json::json!({
+                "valueInputOption": "USER_ENTERED",
+                "data": [{"range": "D1", "values": [["Id"]]}],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/sheet-1/values:batchUpdate"))
+            .and(body_json(serde_json::json!({
+                "valueInputOption": "USER_ENTERED",
+                "data": [{"range": "D2", "values": [[application.id.to_string()]]}],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        let outcome = reconcile(&store, "owner/repo", &endpoint, "token", "sheet-1")
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.pushed_cells, 1);
     }
 }
