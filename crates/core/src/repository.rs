@@ -314,7 +314,10 @@ impl ResumeRepository {
             .checkout_tree(&target, Some(git2::build::CheckoutBuilder::new().safe()))
             .map_err(|error| match error.code() {
                 ErrorCode::Conflict => RepositoryError::Conflict {
-                    message: "safe checkout would overwrite worktree changes".into(),
+                    message: format!(
+                        "this branch has unsaved changes that {} would overwrite — save or discard them first",
+                        request.branch
+                    ),
                 },
                 _ => RepositoryError::Operation(error),
             })?;
@@ -1052,11 +1055,14 @@ mod tests {
             .unwrap();
 
         std::fs::write(dir.path().join("resume.yaml"), "name: Local\n").unwrap();
-        assert!(matches!(
-            repository.checkout(CheckoutRequest {
+        let error = repository
+            .checkout(CheckoutRequest {
                 branch: "revision".into(),
-            }),
-            Err(RepositoryError::Conflict { .. })
+            })
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            RepositoryError::Conflict { message } if message.contains("revision")
         ));
         assert_eq!(repository.state().unwrap().head.unwrap().branch, Some(main));
         assert_eq!(

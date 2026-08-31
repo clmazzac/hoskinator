@@ -81,7 +81,7 @@ function Row({
   branch: Branch;
   depth: number;
   applications: Application[];
-  onCheckout: (name: string) => void;
+  onCheckout: (name: string) => Promise<void>;
   onMerge: (from: string, into: string, direction: "up" | "down") => void;
   onAdd?: () => void;
   onDelete?: () => void;
@@ -198,8 +198,7 @@ function Row({
           className="size-7"
           title="Open in the editor"
           onClick={() => {
-            onCheckout(branch.name);
-            go("editor");
+            onCheckout(branch.name).then(() => go("editor"), () => {});
           }}
         >
           <Pencil className="size-3.5" />
@@ -252,7 +251,10 @@ export default function ResumeTree({
 
   const checkout = (name: string) => {
     setError(null);
-    checkoutBranch(name).then(refresh, (failure: Error) => setError(failure.message));
+    return checkoutBranch(name).then(refresh, (failure: Error) => {
+      setError(failure.message);
+      throw failure;
+    });
   };
 
   const merge = (from: string, into: string, direction: "up" | "down") => {
