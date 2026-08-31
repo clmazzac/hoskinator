@@ -154,7 +154,7 @@ export default function Home() {
         {!ready ? (
           <RepositorySetup status={status} onReady={setStatus} />
         ) : (
-          <div className="grid gap-6">
+          <div className="grid grid-cols-1 gap-6">
             <ResumeTree applications={applications} onChanged={load} />
             <ApplicationTracker
               applications={applications}
