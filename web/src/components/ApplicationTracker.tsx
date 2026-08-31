@@ -198,15 +198,16 @@ export default function ApplicationTracker({
 
   // Clears the sheet row before deleting locally — otherwise the next sync (which notifyChanged
   // may itself trigger) reads the row back with no local match and recreates the application.
+  // Always called rather than gated on `googleSync` — that state can still be stale/null right
+  // after mount, and the server-side handler already no-ops safely when nothing is connected.
   const remove = (application: Application) => {
-    const cleanup = googleSync?.connected
-      ? removeFromGoogleSheet(application.company, application.position).catch(() => undefined)
-      : Promise.resolve();
-    cleanup.then(() =>
-      deleteApplication(application.id).then(notifyChanged, (failure: Error) =>
-        setError(failure.message),
-      ),
-    );
+    removeFromGoogleSheet(application.id, application.company, application.position)
+      .catch(() => undefined)
+      .then(() =>
+        deleteApplication(application.id).then(notifyChanged, (failure: Error) =>
+          setError(failure.message),
+        ),
+      );
   };
 
   return (

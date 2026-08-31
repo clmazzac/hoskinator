@@ -414,7 +414,12 @@ pub trait GoogleRpc {
     /// Clears a deleted application's row from the linked sheet, so the next sync does not read
     /// it back. A no-op if no account is connected, no sheet is linked, or nothing matches.
     #[method(name = "google.remove_from_sheet")]
-    async fn google_remove_from_sheet(&self, company: String, position: String) -> RpcResult<bool>;
+    async fn google_remove_from_sheet(
+        &self,
+        application_id: i64,
+        company: String,
+        position: String,
+    ) -> RpcResult<bool>;
 }
 
 #[rpc(server, client)]
@@ -675,6 +680,17 @@ impl SyncStatusCache {
     }
 }
 
+/// Serializes every operation that touches the linked sheet: the background loop's tick,
+/// `google.sync_now`, and `google.remove_from_sheet`.
+#[derive(Clone, Default)]
+pub struct SyncLock(Arc<tokio::sync::Mutex<()>>);
+
+impl SyncLock {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Owns the background sync loop's task, if one is running.
 #[derive(Clone, Default)]
 pub struct SyncTaskHandle(Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>);
@@ -691,9 +707,10 @@ impl SyncTaskHandle {
         store: Arc<Store>,
         active: ActiveRepository,
         status: SyncStatusCache,
+        lock: SyncLock,
     ) {
         self.stop();
-        let handle = tokio::spawn(sync_loop(store, active, status));
+        let handle = tokio::spawn(sync_loop(store, active, status, lock));
         *self.0.write().expect("sync task lock was poisoned") = Some(handle);
     }
 
@@ -708,7 +725,12 @@ impl SyncTaskHandle {
 /// to sync against (no account connected, no sheet linked, no active repository) is skipped
 /// silently rather than treated as an error — any of those is a normal, temporary state (mid
 /// disconnect, no repository open yet) that the next tick may no longer be in.
-async fn sync_loop(store: Arc<Store>, active: ActiveRepository, status: SyncStatusCache) {
+async fn sync_loop(
+    store: Arc<Store>,
+    active: ActiveRepository,
+    status: SyncStatusCache,
+    lock: SyncLock,
+) {
     let mut ticker = tokio::time::interval(SYNC_POLL_INTERVAL);
     loop {
         ticker.tick().await;
@@ -743,15 +765,18 @@ async fn sync_loop(store: Arc<Store>, active: ActiveRepository, status: SyncStat
             Err(_) => continue,
         };
 
-        match google_sheets::reconcile(
-            &store,
-            &repository,
-            google_sheets::SHEETS_API,
-            &access_token,
-            &spreadsheet_id,
-        )
-        .await
-        {
+        let outcome = {
+            let _guard = lock.0.lock().await;
+            google_sheets::reconcile(
+                &store,
+                &repository,
+                google_sheets::SHEETS_API,
+                &access_token,
+                &spreadsheet_id,
+            )
+            .await
+        };
+        match outcome {
             Ok(_) => status.record_success(),
             Err(error) => status.record_error(source_message(&error)),
         }
@@ -1950,9 +1975,11 @@ pub struct GoogleAuthApi {
     repository_path: ActiveRepository,
     sync_task: SyncTaskHandle,
     sync_status: SyncStatusCache,
+    sync_lock: SyncLock,
 }
 
 impl GoogleAuthApi {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pending: PendingGoogleAuth,
         accounts: GoogleAccountCache,
@@ -1961,6 +1988,7 @@ impl GoogleAuthApi {
         repository_path: ActiveRepository,
         sync_task: SyncTaskHandle,
         sync_status: SyncStatusCache,
+        sync_lock: SyncLock,
     ) -> Self {
         Self {
             pending,
@@ -1970,6 +1998,7 @@ impl GoogleAuthApi {
             repository_path,
             sync_task,
             sync_status,
+            sync_lock,
         }
     }
 
@@ -2119,6 +2148,7 @@ impl GoogleRpcServer for GoogleAuthApi {
 
         let repository = self.repository_scope().await?;
 
+        let _guard = self.sync_lock.0.lock().await;
         google_sheets::reconcile(
             &self.store,
             &repository,
@@ -2139,6 +2169,7 @@ impl GoogleRpcServer for GoogleAuthApi {
                 Arc::clone(&self.store),
                 self.repository_path.clone(),
                 self.sync_status.clone(),
+                self.sync_lock.clone(),
             );
         } else {
             self.sync_task.stop();
@@ -2146,7 +2177,12 @@ impl GoogleRpcServer for GoogleAuthApi {
         Ok(enabled)
     }
 
-    async fn google_remove_from_sheet(&self, company: String, position: String) -> RpcResult<bool> {
+    async fn google_remove_from_sheet(
+        &self,
+        application_id: i64,
+        company: String,
+        position: String,
+    ) -> RpcResult<bool> {
         let config = Self::config()?;
         let (Some(client_id), Some(client_secret), Some(refresh_token), Some(spreadsheet_id)) = (
             config.google_client_id,
@@ -2163,10 +2199,12 @@ impl GoogleRpcServer for GoogleAuthApi {
         .await?
         .access_token;
 
+        let _guard = self.sync_lock.0.lock().await;
         google_sheets::remove_from_sheet(
             google_sheets::SHEETS_API,
             &access_token,
             &spreadsheet_id,
+            application_id,
             &company,
             &position,
         )
