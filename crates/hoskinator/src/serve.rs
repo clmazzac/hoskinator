@@ -7,10 +7,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::{Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use hoskinator_core::home::{Home, HomeError};
 use hoskinator_core::store::{Store, StoreError};
@@ -18,10 +18,11 @@ use jsonrpsee::RpcModule;
 
 use crate::rpc::{
     ActiveRepository, ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi,
-    EntryRpcServer, JobDescriptionApi, JobDescriptionRpcServer, ProfileApi, ProfileRpcServer,
-    RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi,
-    ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
-    SectionRpcServer, WorkspaceApi, WorkspaceRpcServer,
+    EntryRpcServer, GoogleAccountCache, GoogleAuthApi, GoogleRpcServer, JobDescriptionApi,
+    JobDescriptionRpcServer, PendingGoogleAuth, ProfileApi, ProfileRpcServer, RenderApi,
+    RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi, ResumeRepositoryProvider,
+    ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer, WorkspaceApi,
+    WorkspaceRpcServer,
 };
 #[cfg(feature = "ai")]
 use crate::rpc::{AiApi, AiRpcServer};
@@ -32,6 +33,8 @@ pub const DEFAULT_PORT: u16 = 8737;
 pub const PREVIEW_PATH: &str = "/preview.pdf";
 /// Path the exported DOCX is served from.
 pub const PREVIEW_DOCX_PATH: &str = "/preview.docx";
+/// Path Google redirects the browser back to after the consent screen.
+const GOOGLE_CALLBACK_PATH: &str = "/oauth/google/callback";
 
 /// Where renders land: the platform temp directory, not the resume repository.
 ///
@@ -79,7 +82,7 @@ pub async fn run(port: u16) -> Result<(), ServeError> {
     let default_repository_root = home.repositories_dir();
     axum::serve(
         listener,
-        router(store, config.resume_repo, default_repository_root)?,
+        router(store, config.resume_repo, default_repository_root, port)?,
     )
     .with_graceful_shutdown(interrupted())
     .await
@@ -91,10 +94,14 @@ fn router(
     store: Arc<Store>,
     resume_repo: Option<PathBuf>,
     default_repository_root: PathBuf,
+    port: u16,
 ) -> Result<Router, ServeError> {
     // Shared so that switching repositories takes effect for every service immediately, rather
     // than only on the next start.
     let active = ActiveRepository::new(resume_repo);
+    let pending_google_auth = PendingGoogleAuth::new();
+    let google_accounts = GoogleAccountCache::new();
+    let google_redirect_uri = format!("http://127.0.0.1:{port}{GOOGLE_CALLBACK_PATH}");
 
     let mut module = RpcModule::new(());
     module.merge(ProfileApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
@@ -107,6 +114,14 @@ fn router(
     module.merge(RenderApi::new(active.clone()).into_rpc())?;
     module.merge(ApplicationApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(WorkspaceApi::new(active.clone(), default_repository_root).into_rpc())?;
+    module.merge(
+        GoogleAuthApi::new(
+            pending_google_auth.clone(),
+            google_accounts.clone(),
+            google_redirect_uri.clone(),
+        )
+        .into_rpc(),
+    )?;
     #[cfg(feature = "ai")]
     module.merge(AiApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(RepositoryApi::new(ResumeRepositoryProvider::new(active)).into_rpc())?;
@@ -115,9 +130,120 @@ fn router(
         .route(RPC_PATH, post(dispatch))
         .route(PREVIEW_PATH, get(preview))
         .route(PREVIEW_DOCX_PATH, get(preview_docx))
+        .route(
+            GOOGLE_CALLBACK_PATH,
+            get(move |query: Query<GoogleCallbackQuery>| {
+                let pending_google_auth = pending_google_auth.clone();
+                let google_accounts = google_accounts.clone();
+                let google_redirect_uri = google_redirect_uri.clone();
+                async move {
+                    google_callback(
+                        pending_google_auth,
+                        google_accounts,
+                        google_redirect_uri,
+                        query,
+                    )
+                    .await
+                }
+            }),
+        )
         .fallback(crate::web::asset)
         .layer(axum::middleware::from_fn(authenticate))
         .with_state(Arc::new(module)))
+}
+
+#[derive(serde::Deserialize)]
+struct GoogleCallbackQuery {
+    code: Option<String>,
+    state: String,
+    error: Option<String>,
+}
+
+/// Where Google redirects the browser after the consent screen. Exchanges the code for tokens
+/// and stores the refresh token; never renders through the SPA.
+async fn google_callback(
+    pending: PendingGoogleAuth,
+    accounts: GoogleAccountCache,
+    redirect_uri: String,
+    Query(query): Query<GoogleCallbackQuery>,
+) -> Response {
+    let Some(verifier) = pending.take_verifier(&query.state) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "That authorization link has expired or was already used. Close this tab and try connecting again.",
+        )
+            .into_response();
+    };
+    if let Some(error) = query.error {
+        return (
+            StatusCode::OK,
+            format!("Google did not connect the account: {error}. You can close this tab."),
+        )
+            .into_response();
+    }
+    let Some(code) = query.code else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Google's response was missing an authorization code.",
+        )
+            .into_response();
+    };
+    let config = match Home::config() {
+        Ok(config) => config,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not read Hoskinator's configuration.",
+            )
+                .into_response();
+        }
+    };
+    let (Some(client_id), Some(client_secret)) =
+        (config.google_client_id, config.google_client_secret)
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "No Google client id/secret is configured.",
+        )
+            .into_response();
+    };
+
+    let outcome = tokio::task::spawn_blocking(move || {
+        let tokens = hoskinator_core::google_auth::exchange_code(
+            &client_id,
+            &client_secret,
+            &redirect_uri,
+            &code,
+            &verifier,
+        )?;
+        let account_email = hoskinator_core::google_auth::account_email(&tokens.access_token);
+        if let Some(refresh_token) = &tokens.refresh_token
+            && let Some(config_path) = hoskinator_core::home::config_file_path()
+        {
+            hoskinator_core::google_auth::remember_refresh_token(
+                &config_path,
+                Some(refresh_token),
+            )?;
+        }
+        Ok::<_, hoskinator_core::google_auth::GoogleAuthError>(account_email)
+    })
+    .await;
+
+    match outcome {
+        Ok(Ok(account_email)) => {
+            accounts.set(account_email);
+            (
+                StatusCode::OK,
+                Html("<p>Connected. You can close this tab.</p>"),
+            )
+                .into_response()
+        }
+        _ => (
+            StatusCode::BAD_GATEWAY,
+            "Google did not accept that authorization.",
+        )
+            .into_response(),
+    }
 }
 
 /// Serves the most recent render. `?download=<name>` asks the browser to save it under that name.
@@ -213,7 +339,7 @@ mod tests {
         let default_repository_root = dir.path().join("repositories");
         (
             dir,
-            router(Arc::new(store), None, default_repository_root).unwrap(),
+            router(Arc::new(store), None, default_repository_root, DEFAULT_PORT).unwrap(),
         )
     }
 
@@ -226,7 +352,13 @@ mod tests {
         let default_repository_root = dir.path().join("repositories");
         (
             dir,
-            router(Arc::new(store), Some(repo), default_repository_root).unwrap(),
+            router(
+                Arc::new(store),
+                Some(repo),
+                default_repository_root,
+                DEFAULT_PORT,
+            )
+            .unwrap(),
         )
     }
 
@@ -270,6 +402,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // Does not touch `hoskinator_core::home::config_file_path()` (the real, global config
+    // file) — an unmatched `state` is rejected before the handler ever reads configuration, the
+    // same reason no other `workspace.*`/`google.*` method that reads config is exercised here.
+    #[tokio::test]
+    async fn the_google_callback_rejects_an_unmatched_state() {
+        let (_dir, router) = test_router().await;
+        let response = router
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/oauth/google/callback?code=abc&state=never-issued")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

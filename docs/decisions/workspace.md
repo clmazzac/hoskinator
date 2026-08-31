@@ -67,6 +67,10 @@ copied and pasted. Sheets copies as tab-separated rows and exports as CSV, so an
 both covers it with no OAuth, no API key, and no agreement about column order — headings are matched
 by name. Export writes the same shape back, so the sheet stays usable beside the tool.
 
+**Reversed:** `docs/decisions/google-sync.md` adds a real, bidirectional, live sync over the Sheets
+API with OAuth, for a tracker a user edits by hand in a spreadsheet. The CSV importer this section
+describes stays, for anyone who never connects a Google account.
+
 **Status is the one chromatic thing in the app.** Four statuses read at a glance are categorical
 data, and a grey ramp cannot separate four categories the way hue can. Everything else stays
 achromatic.

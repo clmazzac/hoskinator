@@ -4,12 +4,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "ai")]
 use hoskinator_ai::{Assessment, DraftBullet};
 use hoskinator_core::application::{Application, NewApplication, STATUSES};
 use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
+use hoskinator_core::google_auth::{self, GoogleAuthError};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::lineage::{self, Lineage};
 use hoskinator_core::profile::Profile;
@@ -114,6 +116,8 @@ pub const BRAINDUMP_EMPTY: i32 = -32038;
 pub const CONFIG_IO: i32 = -32039;
 /// The resume has no section by that name.
 pub const RESUME_NO_SUCH_SECTION: i32 = -32040;
+/// A Google OAuth call failed, or no account is connected.
+pub const GOOGLE_AUTH: i32 = -32041;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -361,6 +365,36 @@ pub trait WorkspaceRpc {
     async fn workspace_sheet_csv(&self) -> RpcResult<String>;
 }
 
+/// Whether a Google account is connected for Sheets sync, and who. Never carries a token.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GoogleStatus {
+    pub connected: bool,
+    pub account_email: Option<String>,
+}
+
+#[rpc(server, client)]
+pub trait GoogleRpc {
+    /// Whether a Google account is connected for Sheets sync, and who.
+    #[method(name = "google.status")]
+    async fn google_status(&self) -> RpcResult<GoogleStatus>;
+
+    /// Stores the user's own Google Cloud OAuth client id and secret.
+    #[method(name = "google.set_credentials")]
+    async fn google_set_credentials(
+        &self,
+        client_id: Option<String>,
+        client_secret: Option<String>,
+    ) -> RpcResult<bool>;
+
+    /// Starts a connection: returns the URL to send the user's browser to.
+    #[method(name = "google.begin_auth")]
+    async fn google_begin_auth(&self) -> RpcResult<String>;
+
+    /// Forgets the stored refresh token.
+    #[method(name = "google.disconnect")]
+    async fn google_disconnect(&self) -> RpcResult<bool>;
+}
+
 #[rpc(server, client)]
 pub trait ResumeRpc {
     #[method(name = "resume.read")]
@@ -485,6 +519,84 @@ impl ActiveRepository {
 
     pub fn set(&self, path: Option<PathBuf>) {
         *self.0.write().expect("active repository lock was poisoned") = path;
+    }
+}
+
+/// How long a `google.begin_auth` state token stays valid, waiting for the callback.
+const PENDING_GOOGLE_AUTH_TTL: Duration = Duration::from_secs(5 * 60);
+
+struct PendingGoogleAuthState {
+    state: String,
+    verifier: String,
+    created_at: Instant,
+}
+
+/// One in-flight Google OAuth authorization, shared between `google.begin_auth` and the loopback
+/// callback route. Only one flow is ever pending — starting a new one replaces it.
+#[derive(Clone, Default)]
+pub struct PendingGoogleAuth(Arc<RwLock<Option<PendingGoogleAuthState>>>);
+
+impl PendingGoogleAuth {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Starts a fresh flow, returning its `state` token and PKCE challenge.
+    fn begin(&self) -> (String, String) {
+        let state = google_auth::generate_state();
+        let pkce = google_auth::generate_pkce();
+        *self
+            .0
+            .write()
+            .expect("pending Google auth lock was poisoned") = Some(PendingGoogleAuthState {
+            state: state.clone(),
+            verifier: pkce.verifier,
+            created_at: Instant::now(),
+        });
+        (state, pkce.challenge)
+    }
+
+    /// Takes the pending verifier if `state` matches and the flow hasn't expired, clearing it. A
+    /// mismatched `state` leaves the current pending flow untouched; an expired one is cleared
+    /// regardless.
+    pub(crate) fn take_verifier(&self, state: &str) -> Option<String> {
+        let mut guard = self
+            .0
+            .write()
+            .expect("pending Google auth lock was poisoned");
+        let expired = guard
+            .as_ref()
+            .is_some_and(|pending| pending.created_at.elapsed() > PENDING_GOOGLE_AUTH_TTL);
+        let matches = guard.as_ref().is_some_and(|pending| pending.state == state);
+        if !matches && !expired {
+            return None;
+        }
+        let pending = guard.take()?;
+        matches.then_some(pending.verifier)
+    }
+}
+
+/// The connected Google account's email, cached in memory after the first lookup.
+#[derive(Clone, Default)]
+pub struct GoogleAccountCache(Arc<RwLock<Option<String>>>);
+
+impl GoogleAccountCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn get(&self) -> Option<String> {
+        self.0
+            .read()
+            .expect("Google account cache lock was poisoned")
+            .clone()
+    }
+
+    pub(crate) fn set(&self, email: Option<String>) {
+        *self
+            .0
+            .write()
+            .expect("Google account cache lock was poisoned") = email;
     }
 }
 
@@ -1671,6 +1783,131 @@ impl WorkspaceRpcServer for WorkspaceApi {
     }
 }
 
+/// Serves the Google account connection behind Sheets sync.
+pub struct GoogleAuthApi {
+    pending: PendingGoogleAuth,
+    accounts: GoogleAccountCache,
+    redirect_uri: String,
+}
+
+impl GoogleAuthApi {
+    pub fn new(
+        pending: PendingGoogleAuth,
+        accounts: GoogleAccountCache,
+        redirect_uri: String,
+    ) -> Self {
+        Self {
+            pending,
+            accounts,
+            redirect_uri,
+        }
+    }
+
+    fn config() -> RpcResult<hoskinator_core::config::Config> {
+        hoskinator_core::home::Home::config().map_err(|error| {
+            ErrorObjectOwned::owned(GOOGLE_AUTH, source_message(&error), None::<()>)
+        })
+    }
+}
+
+#[async_trait]
+impl GoogleRpcServer for GoogleAuthApi {
+    async fn google_status(&self) -> RpcResult<GoogleStatus> {
+        let config = Self::config()?;
+        if config.google_refresh_token.is_none() {
+            return Ok(GoogleStatus {
+                connected: false,
+                account_email: None,
+            });
+        }
+        if let Some(account_email) = self.accounts.get() {
+            return Ok(GoogleStatus {
+                connected: true,
+                account_email: Some(account_email),
+            });
+        }
+
+        // Not cached yet — likely a fresh daemon start. Back-fill it once; later calls are free.
+        let accounts = self.accounts.clone();
+        google_blocking(move || {
+            let (Some(client_id), Some(client_secret), Some(refresh_token)) = (
+                config.google_client_id,
+                config.google_client_secret,
+                config.google_refresh_token,
+            ) else {
+                return Ok(GoogleStatus {
+                    connected: true,
+                    account_email: None,
+                });
+            };
+            let tokens =
+                google_auth::refresh_access_token(&client_id, &client_secret, &refresh_token)?;
+            let account_email = google_auth::account_email(&tokens.access_token);
+            accounts.set(account_email.clone());
+            Ok(GoogleStatus {
+                connected: true,
+                account_email,
+            })
+        })
+        .await
+    }
+
+    async fn google_set_credentials(
+        &self,
+        client_id: Option<String>,
+        client_secret: Option<String>,
+    ) -> RpcResult<bool> {
+        google_blocking(move || {
+            if let Some(config_path) = hoskinator_core::home::config_file_path() {
+                google_auth::remember_credentials(
+                    &config_path,
+                    client_id.as_deref(),
+                    client_secret.as_deref(),
+                )?;
+            }
+            Ok(true)
+        })
+        .await
+    }
+
+    async fn google_begin_auth(&self) -> RpcResult<String> {
+        let config = Self::config()?;
+        let client_id = config.google_client_id.ok_or_else(|| {
+            ErrorObjectOwned::owned(GOOGLE_AUTH, "no Google client id is configured", None::<()>)
+        })?;
+        let (state, challenge) = self.pending.begin();
+        Ok(google_auth::authorize_url(
+            &client_id,
+            &self.redirect_uri,
+            &state,
+            &challenge,
+        ))
+    }
+
+    async fn google_disconnect(&self) -> RpcResult<bool> {
+        self.accounts.set(None);
+        google_blocking(move || {
+            if let Some(config_path) = hoskinator_core::home::config_file_path() {
+                google_auth::remember_refresh_token(&config_path, None)?;
+            }
+            Ok(true)
+        })
+        .await
+    }
+}
+
+/// Runs a blocking Google OAuth call and maps its failure onto a JSON-RPC error.
+async fn google_blocking<T, F>(operation: F) -> RpcResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, GoogleAuthError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(GOOGLE_AUTH, error.to_string(), None::<()>))?
+        .map_err(|error| ErrorObjectOwned::owned(GOOGLE_AUTH, source_message(&error), None::<()>))
+}
+
 /// Runs a blocking sheet call and maps its failure onto a JSON-RPC error.
 async fn sheet_blocking<T, F>(operation: F) -> RpcResult<T>
 where
@@ -1721,6 +1958,52 @@ mod tests {
         active.set(Some(PathBuf::from("/new")));
 
         assert_eq!(clone.get(), Some(PathBuf::from("/new")));
+    }
+
+    #[test]
+    fn a_matching_state_yields_the_verifier_once() {
+        let pending = PendingGoogleAuth::new();
+        let (state, _challenge) = pending.begin();
+
+        assert!(pending.take_verifier(&state).is_some());
+        assert!(pending.take_verifier(&state).is_none());
+    }
+
+    #[test]
+    fn a_mismatched_state_yields_nothing_and_leaves_the_real_flow_pending() {
+        let pending = PendingGoogleAuth::new();
+        let (state, _challenge) = pending.begin();
+
+        assert!(pending.take_verifier("not-the-state").is_none());
+        assert!(pending.take_verifier(&state).is_some());
+    }
+
+    #[test]
+    fn no_pending_flow_yields_nothing() {
+        let pending = PendingGoogleAuth::new();
+        assert!(pending.take_verifier("anything").is_none());
+    }
+
+    #[test]
+    fn a_second_begin_replaces_the_first_pending_flow() {
+        let pending = PendingGoogleAuth::new();
+        let (first_state, _) = pending.begin();
+        let (second_state, _) = pending.begin();
+
+        assert!(pending.take_verifier(&first_state).is_none());
+        assert!(pending.take_verifier(&second_state).is_some());
+    }
+
+    #[test]
+    fn the_google_account_cache_starts_empty_and_holds_the_last_value_set() {
+        let cache = GoogleAccountCache::new();
+        assert_eq!(cache.get(), None);
+
+        cache.set(Some("cam@example.com".to_string()));
+        assert_eq!(cache.get(), Some("cam@example.com".to_string()));
+
+        cache.set(None);
+        assert_eq!(cache.get(), None);
     }
 
     #[test]

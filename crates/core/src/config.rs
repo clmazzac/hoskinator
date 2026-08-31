@@ -22,6 +22,12 @@ pub struct Config {
     /// Overridden by `ANTHROPIC_API_KEY` env var. Plaintext on disk, readable only by the file's
     /// owner (`remember_anthropic_api_key` sets the file to mode 0600 on Unix).
     pub anthropic_api_key: Option<String>,
+    /// The user's own Google Cloud OAuth client id, for Sheets sync.
+    pub google_client_id: Option<String>,
+    /// The user's own Google Cloud OAuth client secret. Plaintext on disk, mode 0600.
+    pub google_client_secret: Option<String>,
+    /// The refresh token from completing Google's consent flow. Plaintext on disk, mode 0600.
+    pub google_refresh_token: Option<String>,
 }
 
 /// A configuration file exists but could not be used, or could not be written.
