@@ -284,3 +284,38 @@ which accomplishment to place; which wording to use is the next decision, not th
 **Each hit carries its Entry** so a caller can group by role without another read. It carries the
 Entry's type and fields rather than a formatted label: how a hit reads to a user is a design
 decision.
+
+## The store syncs to Turso as a whole snapshot, not a live replica
+
+ADR-0001 names "SQLite/Turso" as the store's home and says it never lives inside the resume
+repository. This is that: `bank.push`/`bank.pull` move the *whole* store — every Section, Entry,
+Bullet, and Variant — to and from one row in a Turso database, so the bank is available on more
+than one machine. Sync is manual only; nothing runs on a timer.
+
+**Why a snapshot, not `libsql`'s embedded replica** (Turso's actual designed-for-this feature, a
+local file kept transparently in sync in the background): `libsql`'s `core` feature links its own
+vendored copy of SQLite, and Diesel's `libsqlite3-sys` links a separate one. Confirmed by hand: the
+two cannot both initialise in the same process — the second one panics
+(`libsql was configured with an incorrect threading configuration`). `hoskinator-core`'s Diesel
+connection is not going anywhere (a full rewrite onto `libsql`'s own async query API was the other
+way to avoid this, and touches every query in every store module), so `libsql` is built with
+`default-features = false, features = ["remote"]` — this drops the vendored SQLite entirely and
+talks to Turso over its HTTP client only. A snapshot is what that mode can do without also hand-
+rolling row-level replication.
+
+**Whole-snapshot replace, no merge.** A pull deletes every local Section and Entry (cascading their
+Bullets and Variants) and recreates them from what Turso holds. The side that syncs last wins,
+whole-store — the same rule `docs/decisions/google-sync.md` already applies to Applications, just
+without the field-level reconciliation Sheets sync does. Ids are not preserved across a sync; they
+are local autoincrements, reassigned on every pull.
+
+**Accepted cost: `push`/`pull`'s network calls are not covered by `cargo test`.** The same
+in-process conflict that rules out the embedded replica also rules out using `libsql`'s local mode
+as a stand-in for "the remote" in this crate's own tests. Everything else — building a snapshot,
+applying one back, and the JSON both travel as — is tested directly against real `Store`s.
+Confirmed by hand against a real Turso database instead: push, a local-only change, then pull,
+which discarded the local change and restored exactly what was pushed, bullets and variants
+included. `remote` alone is not enough to reach a `libsql://` URL — it needs the `tls` feature too
+(`hyper-rustls`), or the connection panics with `the tls feature is disabled`. `libsql` is also
+pre-1.0 (`0.10.0-pre.4`); the repo already depends on release candidates elsewhere (`yamlpatch`,
+`yamlpath`).

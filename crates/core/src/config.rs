@@ -30,6 +30,10 @@ pub struct Config {
     pub google_refresh_token: Option<String>,
     /// Whether the daemon keeps the linked sheet reconciled automatically in the background.
     pub google_sync_enabled: Option<bool>,
+    /// The Turso database URL the Master Store syncs against, e.g. `libsql://<db>.turso.io`.
+    pub turso_url: Option<String>,
+    /// The Turso auth token. Plaintext on disk, mode 0600.
+    pub turso_auth_token: Option<String>,
 }
 
 /// A configuration file exists but could not be used, or could not be written.

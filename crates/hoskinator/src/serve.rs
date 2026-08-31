@@ -17,12 +17,12 @@ use hoskinator_core::store::{Store, StoreError};
 use jsonrpsee::RpcModule;
 
 use crate::rpc::{
-    ActiveRepository, ApplicationApi, ApplicationRpcServer, BulletApi, BulletRpcServer, EntryApi,
-    EntryRpcServer, GoogleAccountCache, GoogleAuthApi, GoogleRpcServer, JobDescriptionApi,
-    JobDescriptionRpcServer, PendingGoogleAuth, ProfileApi, ProfileRpcServer, RenderApi,
-    RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi, ResumeRepositoryProvider,
-    ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi, SectionRpcServer, SyncLock,
-    SyncStatusCache, SyncTaskHandle, WorkspaceApi, WorkspaceRpcServer,
+    ActiveRepository, ApplicationApi, ApplicationRpcServer, BankApi, BankRpcServer, BulletApi,
+    BulletRpcServer, EntryApi, EntryRpcServer, GoogleAccountCache, GoogleAuthApi, GoogleRpcServer,
+    JobDescriptionApi, JobDescriptionRpcServer, PendingGoogleAuth, ProfileApi, ProfileRpcServer,
+    RenderApi, RenderRpcServer, RepositoryApi, RepositoryRpcServer, ResumeApi,
+    ResumeRepositoryProvider, ResumeRpcServer, SearchApi, SearchRpcServer, SectionApi,
+    SectionRpcServer, SyncLock, SyncStatusCache, SyncTaskHandle, WorkspaceApi, WorkspaceRpcServer,
 };
 #[cfg(feature = "ai")]
 use crate::rpc::{AiApi, AiRpcServer};
@@ -122,6 +122,7 @@ fn router(
     module.merge(EntryApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(BulletApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(SearchApi::new(Arc::clone(&store)).into_rpc())?;
+    module.merge(BankApi::new(Arc::clone(&store)).into_rpc())?;
     module.merge(JobDescriptionApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(ResumeApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(RenderApi::new(active.clone()).into_rpc())?;

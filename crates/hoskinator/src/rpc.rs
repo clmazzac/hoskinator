@@ -121,6 +121,10 @@ pub const RESUME_NO_SUCH_SECTION: i32 = -32040;
 pub const GOOGLE_AUTH: i32 = -32041;
 /// Reconciling the linked Google Sheet failed.
 pub const GOOGLE_SHEETS_SYNC: i32 = -32042;
+/// `bank.push` or `bank.pull` was called with no Turso database configured.
+pub const BANK_UNCONFIGURED: i32 = -32043;
+/// A push or pull against the configured Turso database failed.
+pub const BANK_SYNC: i32 = -32044;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -420,6 +424,37 @@ pub trait GoogleRpc {
         company: String,
         position: String,
     ) -> RpcResult<bool>;
+}
+
+/// Whether a Turso database is configured for the Master Store to sync against.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BankStatus {
+    pub configured: bool,
+    pub url: Option<String>,
+}
+
+#[rpc(server, client)]
+pub trait BankRpc {
+    /// Whether a Turso database is configured for the Master Store to sync against.
+    #[method(name = "bank.status")]
+    async fn bank_status(&self) -> RpcResult<BankStatus>;
+
+    /// Stores the Turso database URL and auth token the Master Store syncs against.
+    #[method(name = "bank.set_credentials")]
+    async fn bank_set_credentials(
+        &self,
+        url: Option<String>,
+        auth_token: Option<String>,
+    ) -> RpcResult<bool>;
+
+    /// Uploads the whole local Master Store to Turso, replacing whatever is already there.
+    #[method(name = "bank.push")]
+    async fn bank_push(&self) -> RpcResult<()>;
+
+    /// Downloads Turso's snapshot and replaces the local Master Store with it. `false` if
+    /// nothing has been pushed yet.
+    #[method(name = "bank.pull")]
+    async fn bank_pull(&self) -> RpcResult<bool>;
 }
 
 #[rpc(server, client)]
@@ -821,6 +856,10 @@ store_api!(
     "Serves the Bullet and Variant methods from one store."
 );
 store_api!(SearchApi, "Serves search from one store.");
+store_api!(
+    BankApi,
+    "Serves the Master Store's Turso sync from one store."
+);
 
 /// Serves the Job Description methods from one store, scoring against the active repository's
 /// resume.
@@ -1398,6 +1437,76 @@ impl BulletRpcServer for BulletApi {
 impl SearchRpcServer for SearchApi {
     async fn search_query(&self, query: String) -> RpcResult<Vec<SearchHit>> {
         self.store.search(&query).await.map_err(store_rpc_error)
+    }
+}
+
+fn bank_sync_rpc_error(error: hoskinator_core::bank_sync::BankSyncError) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(BANK_SYNC, source_message(&error), None::<()>)
+}
+
+fn bank_unconfigured() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        BANK_UNCONFIGURED,
+        "no Turso database is configured",
+        None::<()>,
+    )
+}
+
+#[async_trait]
+impl BankRpcServer for BankApi {
+    async fn bank_status(&self) -> RpcResult<BankStatus> {
+        let config = hoskinator_core::home::Home::config().map_err(|error| {
+            ErrorObjectOwned::owned(BANK_SYNC, source_message(&error), None::<()>)
+        })?;
+        Ok(BankStatus {
+            configured: config.turso_url.is_some() && config.turso_auth_token.is_some(),
+            url: config.turso_url,
+        })
+    }
+
+    async fn bank_set_credentials(
+        &self,
+        url: Option<String>,
+        auth_token: Option<String>,
+    ) -> RpcResult<bool> {
+        tokio::task::spawn_blocking(move || {
+            if let Some(config_path) = hoskinator_core::home::config_file_path() {
+                hoskinator_core::bank_sync::remember_credentials(
+                    &config_path,
+                    url.as_deref(),
+                    auth_token.as_deref(),
+                )?;
+            }
+            Ok::<(), hoskinator_core::config::ConfigError>(())
+        })
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(BANK_SYNC, error.to_string(), None::<()>))?
+        .map_err(|error| ErrorObjectOwned::owned(BANK_SYNC, source_message(&error), None::<()>))?;
+        Ok(true)
+    }
+
+    async fn bank_push(&self) -> RpcResult<()> {
+        let config = hoskinator_core::home::Home::config().map_err(|error| {
+            ErrorObjectOwned::owned(BANK_SYNC, source_message(&error), None::<()>)
+        })?;
+        let (Some(url), Some(token)) = (config.turso_url, config.turso_auth_token) else {
+            return Err(bank_unconfigured());
+        };
+        hoskinator_core::bank_sync::push(&self.store, &url, &token)
+            .await
+            .map_err(bank_sync_rpc_error)
+    }
+
+    async fn bank_pull(&self) -> RpcResult<bool> {
+        let config = hoskinator_core::home::Home::config().map_err(|error| {
+            ErrorObjectOwned::owned(BANK_SYNC, source_message(&error), None::<()>)
+        })?;
+        let (Some(url), Some(token)) = (config.turso_url, config.turso_auth_token) else {
+            return Err(bank_unconfigured());
+        };
+        hoskinator_core::bank_sync::pull(&self.store, &url, &token)
+            .await
+            .map_err(bank_sync_rpc_error)
     }
 }
 

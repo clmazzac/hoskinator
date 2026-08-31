@@ -7,6 +7,7 @@
 //! (ADR-0005).
 
 pub mod application;
+pub mod bank_sync;
 pub mod bullet;
 pub mod config;
 pub mod entry;
