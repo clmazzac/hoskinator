@@ -349,8 +349,73 @@ mod tests {
     use tempfile::TempDir;
     use tower::ServiceExt;
 
-    async fn test_router() -> (TempDir, Router) {
-        let dir = TempDir::new().unwrap();
+    /// Serializes every test in this module against `HOSKINATOR_CONFIG`, which [`TestHome`] sets
+    /// for as long as it lives. Locked only by a thread's outermost `TestHome`, tracked via
+    /// [`DEPTH`].
+    static CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    thread_local! {
+        static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    /// A [`TempDir`] that also points `Home::config()` at a nonexistent file inside itself. A
+    /// `TestHome` created while another is already live on the same thread reuses the outer
+    /// one's `HOSKINATOR_CONFIG` value rather than setting its own.
+    struct TestHome {
+        dir: TempDir,
+        _guard: Option<std::sync::MutexGuard<'static, ()>>,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let depth = DEPTH.with(std::cell::Cell::get);
+            DEPTH.with(|cell| cell.set(depth + 1));
+
+            let dir = TempDir::new().unwrap();
+            let guard = if depth == 0 {
+                let guard = CONFIG_ENV_LOCK
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                // SAFETY: `CONFIG_ENV_LOCK` is held for as long as any `TestHome` is live on this
+                // thread, and no other thread can be mutating `HOSKINATOR_CONFIG` at the same time
+                // — every reader (`Home::config()`, transitively) only runs inside a test that
+                // holds this same lock via its own `TestHome`.
+                unsafe {
+                    std::env::set_var(
+                        hoskinator_core::home::CONFIG_ENV,
+                        dir.path().join("config.toml"),
+                    );
+                }
+                Some(guard)
+            } else {
+                None
+            };
+            Self { dir, _guard: guard }
+        }
+    }
+
+    impl std::ops::Deref for TestHome {
+        type Target = TempDir;
+
+        fn deref(&self) -> &TempDir {
+            &self.dir
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            DEPTH.with(|cell| cell.set(cell.get() - 1));
+            if self._guard.is_some() {
+                // SAFETY: see `TestHome::new`.
+                unsafe {
+                    std::env::remove_var(hoskinator_core::home::CONFIG_ENV);
+                }
+            }
+        }
+    }
+
+    async fn test_router() -> (TestHome, Router) {
+        let dir = TestHome::new();
         let store = Store::open(&dir.path().join("store").join("hoskinator.db"))
             .await
             .unwrap();
@@ -361,8 +426,8 @@ mod tests {
         )
     }
 
-    async fn repository_router() -> (TempDir, Router) {
-        let dir = TempDir::new().unwrap();
+    async fn repository_router() -> (TestHome, Router) {
+        let dir = TestHome::new();
         let store = Store::open(&dir.path().join("store").join("hoskinator.db"))
             .await
             .unwrap();
@@ -381,7 +446,7 @@ mod tests {
     }
 
     /// A repository-backed router whose worktree already holds `resume.yaml`.
-    async fn resume_router(yaml: &str) -> (TempDir, Router, PathBuf) {
+    async fn resume_router(yaml: &str) -> (TestHome, Router, PathBuf) {
         let (dir, router) = repository_router().await;
         let repo = dir.path().join("resume");
         std::fs::create_dir_all(&repo).unwrap();

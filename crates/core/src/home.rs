@@ -22,6 +22,9 @@ use crate::config::{Config, ConfigError};
 /// Environment variable that overrides the home directory.
 pub const HOME_ENV: &str = "HOSKINATOR_HOME";
 
+/// Environment variable that overrides the configuration file's path.
+pub const CONFIG_ENV: &str = "HOSKINATOR_CONFIG";
+
 /// Directory within Home holding the store and anything written beside it.
 const STORE_DIR: &str = "store";
 
@@ -136,6 +139,9 @@ fn platform_data_dir() -> Option<PathBuf> {
 
 /// The configuration file path, if the OS provides a configuration directory.
 pub fn config_file_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os(CONFIG_ENV) {
+        return Some(PathBuf::from(path));
+    }
     project_dirs().map(|dirs| dirs.config_dir().join(CONFIG_FILE))
 }
 
