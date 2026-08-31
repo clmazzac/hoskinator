@@ -584,6 +584,93 @@ pub async fn reconcile(
     }
 }
 
+/// Clears a row's tracked-column cells from the linked sheet, matched by company and position —
+/// called when an application is deleted locally, so the next sync does not read its old row
+/// back as a brand-new application. A no-op if nothing matches, including an unrecognisable
+/// header: deleting locally must never fail because the sheet side had nothing to clean up.
+pub async fn remove_from_sheet(
+    endpoint: &str,
+    access_token: &str,
+    spreadsheet_id: &str,
+    company: &str,
+    position: &str,
+) -> Result<(), GoogleSheetsError> {
+    let rows = {
+        let endpoint = endpoint.to_string();
+        let access_token = access_token.to_string();
+        let spreadsheet_id = spreadsheet_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            read_range(&endpoint, &access_token, &spreadsheet_id, SHEET_RANGE)
+        })
+        .await
+        .expect("reading the sheet should not panic")?
+    };
+    let Ok((header_at, columns)) = find_header_row(&rows) else {
+        return Ok(());
+    };
+
+    let company = company.trim();
+    let position = position.trim();
+    let tracked_columns = [
+        columns.id,
+        Some(columns.company),
+        Some(columns.position),
+        columns.status,
+        columns.date_applied,
+        columns.listing_url,
+        columns.resume_branch,
+        columns.notes,
+        columns.jd_text,
+    ];
+    let mut ranges = Vec::new();
+    for (offset, row) in rows[header_at + 1..].iter().enumerate() {
+        if cell(row, Some(columns.company)).trim() != company
+            || cell(row, Some(columns.position)).trim() != position
+        {
+            continue;
+        }
+        let absolute_row = header_at + 2 + offset;
+        for column in tracked_columns.into_iter().flatten() {
+            ranges.push(format!("{}{}", column_letter(column), absolute_row));
+        }
+    }
+    if ranges.is_empty() {
+        return Ok(());
+    }
+
+    let endpoint = endpoint.to_string();
+    let access_token = access_token.to_string();
+    let spreadsheet_id = spreadsheet_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        clear_cells(&endpoint, &access_token, &spreadsheet_id, &ranges)
+    })
+    .await
+    .expect("clearing the sheet should not panic")
+}
+
+/// Clears cells (`values:batchClear`) — used to remove a deleted application's row.
+fn clear_cells(
+    endpoint: &str,
+    access_token: &str,
+    spreadsheet_id: &str,
+    ranges: &[String],
+) -> Result<(), GoogleSheetsError> {
+    let url = format!("{endpoint}/{spreadsheet_id}/values:batchClear");
+    let body = serde_json::json!({ "ranges": ranges });
+    let response = client()?
+        .post(&url)
+        .bearer_auth(access_token)
+        .json(&body)
+        .send()
+        .map_err(GoogleSheetsError::Request)?;
+    if !response.status().is_success() {
+        return Err(GoogleSheetsError::Denied {
+            status: response.status().as_u16(),
+        });
+    }
+    Ok(())
+}
+
 fn client() -> Result<reqwest::blocking::Client, GoogleSheetsError> {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -952,5 +1039,55 @@ mod tests {
                 .unwrap_err();
 
         assert!(matches!(error, GoogleSheetsError::Denied { status: 403 }));
+    }
+
+    #[tokio::test]
+    async fn remove_from_sheet_clears_a_matching_rows_tracked_cells() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sheet-1/values/A1:Z1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "values": [HEADER, ["1", "Acme", "Engineer", "applied", "", "a note"]],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/sheet-1/values:batchClear"))
+            .and(body_json(serde_json::json!({
+                "ranges": ["A2", "B2", "C2", "D2", "E2", "F2"],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        remove_from_sheet(&endpoint, "token", "sheet-1", "Acme", "Engineer")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn remove_from_sheet_is_a_no_op_when_nothing_matches() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sheet-1/values/A1:Z1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "values": [HEADER, ["1", "Acme", "Engineer", "applied", "", ""]],
+            })))
+            .mount(&server)
+            .await;
+        // No `values:batchClear` mock mounted — a call to it would 404, so a passing test
+        // proves `remove_from_sheet` never made one.
+
+        let endpoint = server.uri();
+        remove_from_sheet(&endpoint, "token", "sheet-1", "Initech", "PM")
+            .await
+            .unwrap();
     }
 }

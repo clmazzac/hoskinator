@@ -410,6 +410,11 @@ pub trait GoogleRpc {
     /// Starts or stops the background loop that reconciles the linked sheet every 30s.
     #[method(name = "google.set_sync_enabled")]
     async fn google_set_sync_enabled(&self, enabled: bool) -> RpcResult<bool>;
+
+    /// Clears a deleted application's row from the linked sheet, so the next sync does not read
+    /// it back. A no-op if no account is connected, no sheet is linked, or nothing matches.
+    #[method(name = "google.remove_from_sheet")]
+    async fn google_remove_from_sheet(&self, company: String, position: String) -> RpcResult<bool>;
 }
 
 #[rpc(server, client)]
@@ -2139,6 +2144,37 @@ impl GoogleRpcServer for GoogleAuthApi {
             self.sync_task.stop();
         }
         Ok(enabled)
+    }
+
+    async fn google_remove_from_sheet(&self, company: String, position: String) -> RpcResult<bool> {
+        let config = Self::config()?;
+        let (Some(client_id), Some(client_secret), Some(refresh_token), Some(spreadsheet_id)) = (
+            config.google_client_id,
+            config.google_client_secret,
+            config.google_refresh_token,
+            config.applications_sheet,
+        ) else {
+            return Ok(false);
+        };
+
+        let access_token = google_blocking(move || {
+            google_auth::refresh_access_token(&client_id, &client_secret, &refresh_token)
+        })
+        .await?
+        .access_token;
+
+        google_sheets::remove_from_sheet(
+            google_sheets::SHEETS_API,
+            &access_token,
+            &spreadsheet_id,
+            &company,
+            &position,
+        )
+        .await
+        .map_err(|error| {
+            ErrorObjectOwned::owned(GOOGLE_SHEETS_SYNC, source_message(&error), None::<()>)
+        })?;
+        Ok(true)
     }
 }
 

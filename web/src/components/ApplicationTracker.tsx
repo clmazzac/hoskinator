@@ -29,6 +29,7 @@ import {
   createApplication,
   deleteApplication,
   googleStatus,
+  removeFromGoogleSheet,
   syncGoogleSheetNow,
   updateApplication,
   type Application,
@@ -194,6 +195,19 @@ export default function ApplicationTracker({
     createApplication(BLANK_APPLICATION).then(notifyChanged, (failure: Error) =>
       setError(failure.message),
     );
+
+  // Clears the sheet row before deleting locally — otherwise the next sync (which notifyChanged
+  // may itself trigger) reads the row back with no local match and recreates the application.
+  const remove = (application: Application) => {
+    const cleanup = googleSync?.connected
+      ? removeFromGoogleSheet(application.company, application.position).catch(() => undefined)
+      : Promise.resolve();
+    cleanup.then(() =>
+      deleteApplication(application.id).then(notifyChanged, (failure: Error) =>
+        setError(failure.message),
+      ),
+    );
+  };
 
   return (
     <section className="rounded-lg border bg-card">
@@ -442,11 +456,7 @@ export default function ApplicationTracker({
                     aria-label={`Remove ${application.company || "application"}`}
                     title="Remove"
                     className="grid size-6 place-items-center rounded-sm text-muted-foreground opacity-0 hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100"
-                    onClick={() =>
-                      deleteApplication(application.id).then(notifyChanged, (failure: Error) =>
-                        setError(failure.message),
-                      )
-                    }
+                    onClick={() => remove(application)}
                   >
                     <X className="size-3" />
                   </button>

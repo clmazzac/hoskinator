@@ -635,6 +635,14 @@ export function setGoogleSyncEnabled(enabled: boolean): Promise<boolean> {
   return call<boolean>("google.set_sync_enabled", [enabled]);
 }
 
+/**
+ * Clears a deleted application's row from the linked sheet, so the next sync does not read it
+ * back. A no-op if no account is connected or no sheet is linked.
+ */
+export function removeFromGoogleSheet(company: string, position: string): Promise<boolean> {
+  return call<boolean>("google.remove_from_sheet", [company, position]);
+}
+
 export function repositoryState(): Promise<RepositoryState> {
   return call<RepositoryState>("repository.init", []);
 }
