@@ -63,8 +63,15 @@ function Cell({ children, className }: { children: React.ReactNode; className?: 
   return <td className={cn("px-3 py-2.5 align-middle", className)}>{children}</td>;
 }
 
-/// A key every column but the trailing delete button can sort by, alphabetically on its raw
-/// string value.
+/// `date_applied`'s value for sorting. A blank or unparseable date sorts as the earliest
+/// possible date, the same way an empty string sorts first among the other columns.
+function dateSortValue(value: string | null): number {
+  const parsed = value ? Date.parse(value) : NaN;
+  return Number.isNaN(parsed) ? -Infinity : parsed;
+}
+
+/// A key every column but the trailing delete button can sort by: alphabetically on its raw
+/// string value, except `date_applied`, which sorts by the date it names.
 type SortKey = keyof Pick<
   Application,
   | "company"
@@ -141,8 +148,10 @@ export default function ApplicationTracker({
       : applications;
     if (!sort) return filtered;
     const factor = sort.direction === "asc" ? 1 : -1;
-    return [...filtered].sort(
-      (a, b) => factor * String(a[sort.key] ?? "").localeCompare(String(b[sort.key] ?? "")),
+    return [...filtered].sort((a, b) =>
+      sort.key === "date_applied"
+        ? factor * (dateSortValue(a.date_applied) - dateSortValue(b.date_applied))
+        : factor * String(a[sort.key] ?? "").localeCompare(String(b[sort.key] ?? "")),
     );
   }, [applications, hideSettled, sort]);
 
