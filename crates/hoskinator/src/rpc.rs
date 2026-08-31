@@ -12,6 +12,7 @@ use hoskinator_core::application::{Application, NewApplication, STATUSES};
 use hoskinator_core::bullet::{Bullet, BulletError, Variant};
 use hoskinator_core::entry::{Entry, EntryError, EntryFields};
 use hoskinator_core::google_auth::{self, GoogleAuthError};
+use hoskinator_core::google_sheets::{self, SyncOutcome};
 use hoskinator_core::job_description::{JobDescription, NewJobDescription};
 use hoskinator_core::lineage::{self, Lineage};
 use hoskinator_core::profile::Profile;
@@ -118,6 +119,8 @@ pub const CONFIG_IO: i32 = -32039;
 pub const RESUME_NO_SUCH_SECTION: i32 = -32040;
 /// A Google OAuth call failed, or no account is connected.
 pub const GOOGLE_AUTH: i32 = -32041;
+/// Reconciling the linked Google Sheet failed.
+pub const GOOGLE_SHEETS_SYNC: i32 = -32042;
 
 #[rpc(server, client)]
 pub trait ProfileRpc {
@@ -393,6 +396,10 @@ pub trait GoogleRpc {
     /// Forgets the stored refresh token.
     #[method(name = "google.disconnect")]
     async fn google_disconnect(&self) -> RpcResult<bool>;
+
+    /// Reconciles the linked sheet against the active repository's applications, right now.
+    #[method(name = "google.sync_now")]
+    async fn google_sync_now(&self) -> RpcResult<SyncOutcome>;
 }
 
 #[rpc(server, client)]
@@ -1788,6 +1795,8 @@ pub struct GoogleAuthApi {
     pending: PendingGoogleAuth,
     accounts: GoogleAccountCache,
     redirect_uri: String,
+    store: Arc<Store>,
+    repository_path: ActiveRepository,
 }
 
 impl GoogleAuthApi {
@@ -1795,11 +1804,15 @@ impl GoogleAuthApi {
         pending: PendingGoogleAuth,
         accounts: GoogleAccountCache,
         redirect_uri: String,
+        store: Arc<Store>,
+        repository_path: ActiveRepository,
     ) -> Self {
         Self {
             pending,
             accounts,
             redirect_uri,
+            store,
+            repository_path,
         }
     }
 
@@ -1807,6 +1820,21 @@ impl GoogleAuthApi {
         hoskinator_core::home::Home::config().map_err(|error| {
             ErrorObjectOwned::owned(GOOGLE_AUTH, source_message(&error), None::<()>)
         })
+    }
+
+    /// The `owner/name` of the resume repository currently active, used to scope applications —
+    /// same lookup as `ApplicationApi::repository_scope`.
+    async fn repository_scope(&self) -> RpcResult<String> {
+        let path = self
+            .repository_path
+            .get()
+            .ok_or_else(applications_unavailable)?;
+        tokio::task::spawn_blocking(move || {
+            workspace::remote(&path).and_then(|url| workspace::repository_slug(&url))
+        })
+        .await
+        .map_err(|error| ErrorObjectOwned::owned(APPLICATION_IO, error.to_string(), None::<()>))?
+        .ok_or_else(applications_unavailable)
     }
 }
 
@@ -1893,6 +1921,48 @@ impl GoogleRpcServer for GoogleAuthApi {
             Ok(true)
         })
         .await
+    }
+
+    async fn google_sync_now(&self) -> RpcResult<SyncOutcome> {
+        let config = Self::config()?;
+        let (Some(client_id), Some(client_secret), Some(refresh_token)) = (
+            config.google_client_id,
+            config.google_client_secret,
+            config.google_refresh_token,
+        ) else {
+            return Err(ErrorObjectOwned::owned(
+                GOOGLE_AUTH,
+                "no Google account is connected",
+                None::<()>,
+            ));
+        };
+        let Some(spreadsheet_id) = config.applications_sheet else {
+            return Err(ErrorObjectOwned::owned(
+                GOOGLE_SHEETS_SYNC,
+                "no sheet is linked yet",
+                None::<()>,
+            ));
+        };
+
+        let access_token = google_blocking(move || {
+            google_auth::refresh_access_token(&client_id, &client_secret, &refresh_token)
+        })
+        .await?
+        .access_token;
+
+        let repository = self.repository_scope().await?;
+
+        google_sheets::reconcile(
+            &self.store,
+            &repository,
+            google_sheets::SHEETS_API,
+            &access_token,
+            &spreadsheet_id,
+        )
+        .await
+        .map_err(|error| {
+            ErrorObjectOwned::owned(GOOGLE_SHEETS_SYNC, source_message(&error), None::<()>)
+        })
     }
 }
 

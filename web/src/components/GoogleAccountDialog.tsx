@@ -15,8 +15,12 @@ import {
   beginGoogleAuth,
   disconnectGoogle,
   googleStatus,
+  linkSheet,
   setGoogleCredentials,
+  syncGoogleSheetNow,
+  workspaceStatus,
   type GoogleStatus,
+  type SyncOutcome,
 } from "@/rpc";
 
 // How long to keep checking for the OAuth redirect to complete, once the consent tab is opened.
@@ -38,6 +42,11 @@ export default function GoogleAccountDialog({
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncOutcome, setSyncOutcome] = useState<SyncOutcome | null>(null);
+  const [linkedSheet, setLinkedSheet] = useState<string | null>(null);
+  const [sheetInput, setSheetInput] = useState("");
+  const [linking, setLinking] = useState(false);
   const pollTimer = useRef<number | null>(null);
 
   const stopPolling = () => {
@@ -52,7 +61,13 @@ export default function GoogleAccountDialog({
     setClientId("");
     setClientSecret("");
     setError(null);
+    setSyncOutcome(null);
+    setSheetInput("");
     googleStatus().then(setStatus, (failure: Error) => setError(failure.message));
+    workspaceStatus().then(
+      (status) => setLinkedSheet(status.applications_sheet),
+      () => setLinkedSheet(null),
+    );
     return stopPolling;
   }, [open]);
 
@@ -105,6 +120,38 @@ export default function GoogleAccountDialog({
     );
   };
 
+  const link = () => {
+    setLinking(true);
+    setError(null);
+    linkSheet(sheetInput).then(
+      (status) => {
+        setLinking(false);
+        setSheetInput("");
+        setLinkedSheet(status.applications_sheet);
+      },
+      (failure: Error) => {
+        setLinking(false);
+        setError(failure.message);
+      },
+    );
+  };
+
+  const sync = () => {
+    setSyncing(true);
+    setError(null);
+    setSyncOutcome(null);
+    syncGoogleSheetNow().then(
+      (outcome) => {
+        setSyncing(false);
+        setSyncOutcome(outcome);
+      },
+      (failure: Error) => {
+        setSyncing(false);
+        setError(failure.message);
+      },
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -112,7 +159,7 @@ export default function GoogleAccountDialog({
           <DialogTitle>Google Sheets sync</DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <p className="text-xs text-muted-foreground">
             {status === null
               ? "Checking…"
@@ -120,6 +167,47 @@ export default function GoogleAccountDialog({
                 ? `Connected${status.account_email ? ` as ${status.account_email}` : ""}.`
                 : "Not connected."}
           </p>
+          {syncOutcome && (
+            <p className="font-mono text-xs text-muted-foreground">
+              pulled {syncOutcome.pulled} · pushed {syncOutcome.pushed_cells} cells · created{" "}
+              {syncOutcome.created_locally} · appended {syncOutcome.appended_to_sheet}
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 gap-1.5">
+            <Label htmlFor="google-sheet-link" className="text-xs">
+              Linked sheet
+            </Label>
+            {linkedSheet && (
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${linkedSheet}/edit`}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate font-mono text-xs text-muted-foreground underline underline-offset-2"
+              >
+                {linkedSheet}
+              </a>
+            )}
+            <div className="flex min-w-0 items-center gap-2">
+              <Input
+                id="google-sheet-link"
+                value={sheetInput}
+                onChange={(event) => setSheetInput(event.target.value)}
+                placeholder="Paste a Google Sheets link to change it"
+                className="h-7 min-w-0 text-xs"
+                spellCheck={false}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 text-xs"
+                disabled={linking || sheetInput.trim() === ""}
+                onClick={link}
+              >
+                {linking ? "Linking…" : "Link"}
+              </Button>
+            </div>
+          </div>
 
           <div className="grid gap-1.5">
             <Label htmlFor="google-client-id">Google OAuth client id</Label>
@@ -147,9 +235,14 @@ export default function GoogleAccountDialog({
 
         <DialogFooter>
           {status?.connected && (
-            <Button variant="ghost" disabled={busy} onClick={disconnect}>
-              Disconnect
-            </Button>
+            <>
+              <Button variant="ghost" disabled={busy} onClick={disconnect}>
+                Disconnect
+              </Button>
+              <Button variant="secondary" disabled={syncing} onClick={sync}>
+                {syncing ? "Syncing…" : "Sync now"}
+              </Button>
+            </>
           )}
           <DialogClose render={<Button variant="ghost">Close</Button>} />
           <Button
