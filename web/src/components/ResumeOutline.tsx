@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/collapsible";
 import RemoveButton from "@/components/RemoveButton";
 import SaveToBank from "@/components/SaveToBank";
-import { entryLabel } from "@/entryFields";
+import { ELEMENT_FIELDS, entryLabel } from "@/entryFields";
 import {
   carriesElement,
   carriesEntryMove,
@@ -129,22 +129,40 @@ function updateEntry(
 
 // A one-line entry keeps its elements in one comma-separated string; each is shown and
 // dragged on its own, and rewriting the string is what adds, removes, or reorders one.
+// Drops that miss every chip — including all of them, when there are none yet — fall through to
+// the container, which appends instead of inserting at a position.
 function ElementRow({
   entryIndex,
-  details,
+  value,
   onChange,
 }: {
   entryIndex: number;
-  details: string;
-  onChange: (details: string) => void;
+  value: string;
+  onChange: (value: string) => void;
 }) {
-  const elements = splitElements(details);
+  const elements = splitElements(value);
   const [target, setTarget] = useState<number | null>(null);
 
   const move = (from: number, to: number) => onChange(joinElements(moved(elements, from, to)));
 
   return (
-    <div className="flex flex-wrap items-center gap-1 py-1 pr-2 pl-9">
+    <div
+      className="flex flex-wrap items-center gap-1 py-1 pr-2 pl-9"
+      onDragOver={(event) => {
+        if (!carriesWording(event)) return;
+        event.preventDefault();
+      }}
+      onDrop={(event) => {
+        const wording = draggedWording(event);
+        if (!wording) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onChange(joinElements([...elements, wording]));
+      }}
+    >
+      {elements.length === 0 && (
+        <span className="text-xs text-muted-foreground italic">Drop a wording here.</span>
+      )}
       {elements.map((element, index) => (
         <span
           key={`${element}-${index}`}
@@ -227,8 +245,11 @@ function EntryNode({
   const [wordingAt, setWordingAt] = useState<number | null>(null);
   const shape = shapeOf(entry.fields);
   const { title, subtitle, dates } = entryLabel(shape, entry.fields);
-  const details = ((entry.fields ?? {}) as Record<string, unknown>).details;
   const isOneLine = shape === "one-line";
+  const elementField = ELEMENT_FIELDS[shape];
+  const elementValue = elementField
+    ? ((entry.fields ?? {}) as Record<string, unknown>)[elementField]
+    : undefined;
 
   return (
     <Collapsible
@@ -276,12 +297,12 @@ function EntryNode({
         if (!text) return;
         event.preventDefault();
         setOpen(true);
-        if (isOneLine) {
-          const current = typeof details === "string" ? details : "";
+        if (elementField && isOneLine) {
+          const current = typeof elementValue === "string" ? elementValue : "";
           onSetField(
             section,
             entry.index,
-            "details",
+            elementField,
             joinElements([...splitElements(current), text]),
           );
         } else {
@@ -318,13 +339,14 @@ function EntryNode({
       </div>
 
       <CollapsibleContent>
-        {isOneLine ? (
+        {elementField && (
           <ElementRow
             entryIndex={entry.index}
-            details={typeof details === "string" ? details : ""}
-            onChange={(next) => onSetField(section, entry.index, "details", next)}
+            value={typeof elementValue === "string" ? elementValue : ""}
+            onChange={(next) => onSetField(section, entry.index, elementField, next)}
           />
-        ) : entry.highlights.length === 0 ? (
+        )}
+        {isOneLine ? null : entry.highlights.length === 0 ? (
           <p className="py-1 pr-2 pl-9 text-xs text-muted-foreground italic">
             Drop a wording here.
           </p>
