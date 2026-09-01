@@ -1,5 +1,6 @@
 //! Hoskinator: daemon, CLI, and Web UI host in one binary (ADR-0005).
 
+use std::net::IpAddr;
 use std::process::ExitCode;
 
 use clap::builder::TypedValueParser;
@@ -17,6 +18,10 @@ struct Cli {
     /// Port the daemon serves on.
     #[arg(long, global = true, default_value_t = serve::DEFAULT_PORT)]
     port: u16,
+    /// Address the daemon binds. Change from loopback only behind your own auth/network
+    /// boundary (e.g. Identity-Aware Proxy) — the daemon itself ships no TLS and no auth.
+    #[arg(long, global = true, default_value_t = serve::DEFAULT_BIND)]
+    bind: IpAddr,
     #[command(subcommand)]
     command: Command,
 }
@@ -229,8 +234,9 @@ async fn run<E: std::error::Error + 'static>(
 async fn main() -> ExitCode {
     let arguments = Cli::parse();
     let port = arguments.port;
+    let bind = arguments.bind;
     let result: Result<(), Box<dyn std::error::Error>> = match arguments.command {
-        Command::Serve => run(serve::run(port)).await,
+        Command::Serve => run(serve::run(port, bind)).await,
         Command::Profile { action } => match action {
             ProfileAction::Get => run(cli::profile_get(port)).await,
             ProfileAction::Set => run(cli::profile_set(port)).await,

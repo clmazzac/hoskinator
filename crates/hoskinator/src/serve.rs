@@ -1,6 +1,8 @@
 //! The HTTP daemon.
 //!
-//! Binds loopback only and ships no TLS (ADR-0003).
+//! Binds loopback by default and ships no TLS and no auth of its own (ADR-0003) — the bind
+//! address is a `--bind` flag so a deployment can put its own boundary (e.g. Identity-Aware
+//! Proxy) in front and hand this a non-loopback address.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -29,6 +31,8 @@ use crate::rpc::{AiApi, AiRpcServer};
 
 /// Port the daemon binds unless told otherwise.
 pub const DEFAULT_PORT: u16 = 8737;
+/// Address the daemon binds unless told otherwise.
+pub const DEFAULT_BIND: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 /// Path the rendered PDF is served from, so a browser can show what rendercv produced.
 pub const PREVIEW_PATH: &str = "/preview.pdf";
 /// Path the exported DOCX is served from.
@@ -68,11 +72,11 @@ pub enum ServeError {
 }
 
 /// Serves until the process is interrupted.
-pub async fn run(port: u16) -> Result<(), ServeError> {
+pub async fn run(port: u16, bind: IpAddr) -> Result<(), ServeError> {
     let config = Home::config()?;
     let home = Home::resolve_with_config(&config)?;
     let store = Arc::new(Store::open(&home.store_path()).await?);
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let address = SocketAddr::new(bind, port);
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(|source| ServeError::Bind { address, source })?;
