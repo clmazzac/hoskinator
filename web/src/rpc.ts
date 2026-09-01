@@ -702,3 +702,35 @@ export function updateApplication(
 export function deleteApplication(id: number): Promise<null> {
   return call<null>("application.delete", [id]);
 }
+
+// ---------------------------------------------------------------------------
+// Bank sync (Turso)
+// ---------------------------------------------------------------------------
+
+export interface BankStatus {
+  configured: boolean;
+  url: string | null;
+}
+
+export function bankStatus(): Promise<BankStatus> {
+  return call<BankStatus>("bank.status", []);
+}
+
+/** Stores the Turso database URL and auth token the Master Store syncs against. */
+export function bankSetCredentials(
+  url: string | null,
+  authToken: string | null,
+): Promise<boolean> {
+  return call<boolean>("bank.set_credentials", [url, authToken]);
+}
+
+/** Uploads the whole local Master Store to Turso, replacing whatever is already there. */
+export function bankPush(): Promise<null> {
+  return call<null>("bank.push", []);
+}
+
+/** Downloads Turso's snapshot and replaces the local Master Store with it. `false` if nothing
+ * has been pushed yet. */
+export function bankPull(): Promise<boolean> {
+  return call<boolean>("bank.pull", []);
+}

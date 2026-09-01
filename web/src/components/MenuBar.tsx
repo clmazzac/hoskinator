@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ChevronDown,
+  Cloud,
   FilePlus2,
   FolderPlus,
   GitBranch,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 
 import ApiKeyDialog from "@/components/ApiKeyDialog";
+import BankSyncDialog from "@/components/BankSyncDialog";
 import NewEntryDialog from "@/components/NewEntryDialog";
 import NewSectionDialog from "@/components/NewSectionDialog";
 import { Button } from "@/components/ui/button";
@@ -62,6 +64,7 @@ export default function MenuBar({
   const [creatingEntry, setCreatingEntry] = useState(false);
   const [creatingSection, setCreatingSection] = useState(false);
   const [settingApiKey, setSettingApiKey] = useState(false);
+  const [syncingBank, setSyncingBank] = useState(false);
 
   useEffect(() => {
     resumeThemes().then(setStyles, () => setStyles([]));
@@ -263,6 +266,18 @@ export default function MenuBar({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-6"
+        onClick={() => setSyncingBank(true)}
+        aria-label="Bank sync"
+        title="Bank sync"
+      >
+        <Cloud className="size-3.5" />
+      </Button>
+      <BankSyncDialog open={syncingBank} onOpenChange={setSyncingBank} />
 
       <Button
         variant="ghost"
