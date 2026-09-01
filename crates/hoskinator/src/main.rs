@@ -22,6 +22,11 @@ struct Cli {
     /// boundary (e.g. Identity-Aware Proxy) — the daemon itself ships no TLS and no auth.
     #[arg(long, global = true, default_value_t = serve::DEFAULT_BIND)]
     bind: IpAddr,
+    /// The URL a browser reaches this daemon at, e.g. `https://hoskinator.example.com`. Google's
+    /// OAuth consent screen redirects here, so behind a reverse proxy this must be the proxy's
+    /// address, not `--bind`. Defaults to `http://127.0.0.1:<port>`.
+    #[arg(long, global = true)]
+    public_url: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -235,8 +240,9 @@ async fn main() -> ExitCode {
     let arguments = Cli::parse();
     let port = arguments.port;
     let bind = arguments.bind;
+    let public_url = arguments.public_url;
     let result: Result<(), Box<dyn std::error::Error>> = match arguments.command {
-        Command::Serve => run(serve::run(port, bind)).await,
+        Command::Serve => run(serve::run(port, bind, public_url)).await,
         Command::Profile { action } => match action {
             ProfileAction::Get => run(cli::profile_get(port)).await,
             ProfileAction::Set => run(cli::profile_set(port)).await,

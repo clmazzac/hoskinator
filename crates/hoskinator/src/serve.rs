@@ -72,7 +72,7 @@ pub enum ServeError {
 }
 
 /// Serves until the process is interrupted.
-pub async fn run(port: u16, bind: IpAddr) -> Result<(), ServeError> {
+pub async fn run(port: u16, bind: IpAddr, public_url: Option<String>) -> Result<(), ServeError> {
     let config = Home::config()?;
     let home = Home::resolve_with_config(&config)?;
     let store = Arc::new(Store::open(&home.store_path()).await?);
@@ -86,7 +86,13 @@ pub async fn run(port: u16, bind: IpAddr) -> Result<(), ServeError> {
     let default_repository_root = home.repositories_dir();
     axum::serve(
         listener,
-        router(store, config.resume_repo, default_repository_root, port)?,
+        router(
+            store,
+            config.resume_repo,
+            default_repository_root,
+            port,
+            public_url,
+        )?,
     )
     .with_graceful_shutdown(interrupted())
     .await
@@ -99,13 +105,17 @@ fn router(
     resume_repo: Option<PathBuf>,
     default_repository_root: PathBuf,
     port: u16,
+    public_url: Option<String>,
 ) -> Result<Router, ServeError> {
     // Shared so that switching repositories takes effect for every service immediately, rather
     // than only on the next start.
     let active = ActiveRepository::new(resume_repo);
     let pending_google_auth = PendingGoogleAuth::new();
     let google_accounts = GoogleAccountCache::new();
-    let google_redirect_uri = format!("http://127.0.0.1:{port}{GOOGLE_CALLBACK_PATH}");
+    // Google redirects the browser here after consent, so behind a reverse proxy (e.g. Identity-
+    // Aware Proxy) this must be the proxy's own address, not the daemon's loopback bind.
+    let origin = public_url.unwrap_or_else(|| format!("http://127.0.0.1:{port}"));
+    let google_redirect_uri = format!("{origin}{GOOGLE_CALLBACK_PATH}");
     let sync_task = SyncTaskHandle::new();
     let sync_status = SyncStatusCache::new();
     let sync_lock = SyncLock::new();
@@ -426,7 +436,14 @@ mod tests {
         let default_repository_root = dir.path().join("repositories");
         (
             dir,
-            router(Arc::new(store), None, default_repository_root, DEFAULT_PORT).unwrap(),
+            router(
+                Arc::new(store),
+                None,
+                default_repository_root,
+                DEFAULT_PORT,
+                None,
+            )
+            .unwrap(),
         )
     }
 
@@ -444,6 +461,7 @@ mod tests {
                 Some(repo),
                 default_repository_root,
                 DEFAULT_PORT,
+                None,
             )
             .unwrap(),
         )
