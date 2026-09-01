@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderGit2, Loader2, Moon, Plus, Sun, UploadCloud } from "lucide-react";
+import { FolderGit2, Loader2, Moon, Plus, Save, Sun } from "lucide-react";
 
 import ApplicationTracker from "@/components/ApplicationTracker";
 import LaunchDialog from "@/components/LaunchDialog";
@@ -12,7 +12,6 @@ import { repositorySlug } from "@/lib/utils";
 import {
   commitResume,
   listApplications,
-  pushBranch,
   repositoryState,
   repositoryStatus,
   workspaceStatus,
@@ -25,7 +24,6 @@ export default function Home() {
   const [status, setStatus] = useState<WorkspaceStatus | null>(null);
   const [applications, setApplications] = useState<Application[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [head, setHead] = useState<string | null>(null);
   const [dirty, setDirty] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -37,10 +35,7 @@ export default function Home() {
     workspaceStatus().then(setStatus, () => setStatus(null));
     listApplications().then(setApplications, () => setApplications([]));
     repositoryState().then(
-      (state) => {
-        setBranches(state.branches);
-        setHead(state.head?.branch ?? null);
-      },
+      (state) => setBranches(state.branches),
       () => setBranches([]),
     );
     repositoryStatus().then(
@@ -51,25 +46,22 @@ export default function Home() {
 
   useEffect(load, [load]);
 
+  // Commits to the local repository only. Pushing to `origin` is the user's own `git push`.
   const saveAll = () => {
     setBusy(true);
     setNotice(null);
-    // The commit and the push fail for different reasons — a repository with no remote commits
-    // perfectly well — so a failed push must not read as a failed commit.
-    commitResume("Update resume")
-      .then(
-        () =>
-          (head ? pushBranch(head) : Promise.resolve(null)).then(
-            () => "Committed and pushed.",
-            (failure: Error) => `Committed. Push failed: ${failure.message}`,
-          ),
-        (failure: Error) => `Nothing committed: ${failure.message}`,
-      )
-      .then((said) => {
+    commitResume("Update resume").then(
+      () => {
         setBusy(false);
-        setNotice(said);
+        setNotice("Saved.");
         load();
-      });
+      },
+      (failure: Error) => {
+        setBusy(false);
+        setNotice(`Nothing to save: ${failure.message}`);
+        load();
+      },
+    );
   };
 
   if (!status) {
@@ -120,9 +112,9 @@ export default function Home() {
                 {busy ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <UploadCloud className="size-3.5" />
+                  <Save className="size-3.5" />
                 )}
-                Save &amp; push
+                Save
               </Button>
               <Button
                 size="sm"

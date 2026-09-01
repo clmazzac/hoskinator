@@ -581,10 +581,6 @@ export function sheetCsv(): Promise<string> {
   return call<string>("workspace.sheet_csv", []);
 }
 
-export function pushBranch(branch: string): Promise<null> {
-  return call<null>("workspace.push", [branch]);
-}
-
 export function branchName(slug: string, target: string | null): Promise<string> {
   return call<string>("workspace.names", [slug, target]);
 }
