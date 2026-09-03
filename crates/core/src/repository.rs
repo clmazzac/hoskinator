@@ -1088,7 +1088,11 @@ mod tests {
             })
             .unwrap();
 
-        std::fs::write(dir.path().join("resume.yaml"), "name: Tailored For Twin A\n").unwrap();
+        std::fs::write(
+            dir.path().join("resume.yaml"),
+            "name: Tailored For Twin A\n",
+        )
+        .unwrap();
 
         let error = repository
             .checkout(CheckoutRequest {
