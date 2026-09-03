@@ -310,6 +310,43 @@ impl ResumeRepository {
             .get()
             .peel(git2::ObjectType::Tree)
             .map_err(RepositoryError::Operation)?;
+
+        // `checkout_tree`'s safe strategy only refuses when the modified path's content
+        // actually differs between the current and target trees. Two branches that share a
+        // common ancestor with no per-branch commits yet (e.g. freshly created from the same
+        // archetype) have identical trees for that path, so libgit2 sees no conflict and
+        // happily carries the uncommitted edit into the new branch's working directory —
+        // silently mislabeling it as belonging there. Refuse up front whenever tracked changes
+        // are pending, regardless of what the target tree looks like.
+        let dirty = self
+            .repository
+            .statuses(None)
+            .map_err(RepositoryError::Operation)?
+            .iter()
+            .any(|entry| {
+                let status = entry.status();
+                !status.contains(Status::WT_NEW)
+                    && status.intersects(
+                        Status::WT_MODIFIED
+                            | Status::WT_DELETED
+                            | Status::WT_TYPECHANGE
+                            | Status::WT_RENAMED
+                            | Status::INDEX_NEW
+                            | Status::INDEX_MODIFIED
+                            | Status::INDEX_DELETED
+                            | Status::INDEX_TYPECHANGE
+                            | Status::INDEX_RENAMED,
+                    )
+            });
+        if dirty {
+            return Err(RepositoryError::Conflict {
+                message: format!(
+                    "this branch has unsaved changes that {} would overwrite — save or discard them first",
+                    request.branch
+                ),
+            });
+        }
+
         self.repository
             .checkout_tree(&target, Some(git2::build::CheckoutBuilder::new().safe()))
             .map_err(|error| match error.code() {
@@ -1024,6 +1061,52 @@ mod tests {
             repository.delete_branch("divergent"),
             Err(RepositoryError::Conflict { .. })
         ));
+    }
+
+    #[test]
+    fn checkout_refuses_uncommitted_changes_even_when_the_target_branch_is_identical() {
+        // Regression test: two branches created from the same commit, with no commits of their
+        // own yet, have identical trees. A naive safe checkout sees no conflict and would
+        // silently carry an uncommitted edit into the other branch's working directory.
+        let (dir, repository) = repo();
+        initial_commit(&repository, &dir);
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "twin-a".into(),
+                from: None,
+            })
+            .unwrap();
+        repository
+            .create_branch(CreateBranchRequest {
+                name: "twin-b".into(),
+                from: None,
+            })
+            .unwrap();
+        repository
+            .checkout(CheckoutRequest {
+                branch: "twin-a".into(),
+            })
+            .unwrap();
+
+        std::fs::write(dir.path().join("resume.yaml"), "name: Tailored For Twin A\n").unwrap();
+
+        let error = repository
+            .checkout(CheckoutRequest {
+                branch: "twin-b".into(),
+            })
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            RepositoryError::Conflict { message } if message.contains("twin-b")
+        ));
+        assert_eq!(
+            repository.state().unwrap().head.unwrap().branch.as_deref(),
+            Some("twin-a")
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("resume.yaml")).unwrap(),
+            "name: Tailored For Twin A\n"
+        );
     }
 
     #[test]
