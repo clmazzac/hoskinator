@@ -33,6 +33,8 @@ pub struct Application {
     pub listing_url: Option<String>,
     /// The branch whose resume was sent, if one was.
     pub resume_branch: Option<String>,
+    /// The Drive link for the resume that was actually sent, filled in by hand.
+    pub resume_drive_link: Option<String>,
     pub notes: Option<String>,
     /// The pasted posting this application answers.
     pub jd_text: Option<String>,
@@ -50,6 +52,7 @@ pub struct NewApplication {
     pub date_applied: Option<String>,
     pub listing_url: Option<String>,
     pub resume_branch: Option<String>,
+    pub resume_drive_link: Option<String>,
     pub notes: Option<String>,
     pub jd_text: Option<String>,
 }
@@ -197,6 +200,7 @@ mod tests {
             date_applied: None,
             listing_url: None,
             resume_branch: None,
+            resume_drive_link: None,
             notes: None,
             jd_text: None,
         }

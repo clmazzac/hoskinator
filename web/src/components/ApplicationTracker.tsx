@@ -56,6 +56,7 @@ export const BLANK_APPLICATION: NewApplication = {
   date_applied: null,
   listing_url: null,
   resume_branch: null,
+  resume_drive_link: null,
   notes: null,
   jd_text: null,
 };
@@ -86,6 +87,7 @@ type SortKey = keyof Pick<
   | "status"
   | "listing_url"
   | "resume_branch"
+  | "resume_drive_link"
   | "notes"
   | "jd_text"
 >;
@@ -328,7 +330,10 @@ export default function ApplicationTracker({
                 <SortHeader label="Listing" sort={sort} column="listing_url" onClick={() => toggleSort("listing_url")} />
               </th>
               <th className="px-3 py-2 font-medium">
-                <SortHeader label="Resume" sort={sort} column="resume_branch" onClick={() => toggleSort("resume_branch")} />
+                <SortHeader label="Branch" sort={sort} column="resume_branch" onClick={() => toggleSort("resume_branch")} />
+              </th>
+              <th className="px-3 py-2 font-medium">
+                <SortHeader label="Drive link" sort={sort} column="resume_drive_link" onClick={() => toggleSort("resume_drive_link")} />
               </th>
               <th className="px-3 py-2 font-medium">
                 <SortHeader label="Notes" sort={sort} column="notes" onClick={() => toggleSort("notes")} />
@@ -435,6 +440,30 @@ export default function ApplicationTracker({
                       ))}
                     </SelectContent>
                   </Select>
+                </Cell>
+                <Cell className="max-w-48">
+                  <div className="flex items-center gap-1">
+                    <EditableText
+                      value={application.resume_drive_link ?? ""}
+                      onCommit={(link) =>
+                        save(application, { resume_drive_link: link || null })
+                      }
+                      placeholder="Drive link"
+                      className="truncate"
+                      title={application.resume_drive_link ?? undefined}
+                    />
+                    {application.resume_drive_link && (
+                      <a
+                        href={application.resume_drive_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        title="Open in Drive"
+                      >
+                        <ExternalLink className="size-3.5" />
+                      </a>
+                    )}
+                  </div>
                 </Cell>
                 <Cell className="min-w-56">
                   <EditableText

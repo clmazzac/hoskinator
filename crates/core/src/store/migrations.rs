@@ -60,6 +60,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 12,
         sql: include_str!("../../migrations/0012_backfill_application_job_descriptions.sql"),
     },
+    Migration {
+        version: 13,
+        sql: include_str!("../../migrations/0013_application_resume_drive_link.sql"),
+    },
 ];
 
 struct Migration {

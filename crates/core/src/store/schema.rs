@@ -76,6 +76,7 @@ diesel::table! {
         date_applied -> Nullable<Text>,
         listing_url -> Nullable<Text>,
         resume_branch -> Nullable<Text>,
+        resume_drive_link -> Nullable<Text>,
         notes -> Nullable<Text>,
         jd_text -> Nullable<Text>,
         created_at -> Text,

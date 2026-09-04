@@ -52,6 +52,7 @@ enum Field {
     DateApplied,
     ListingUrl,
     ResumeBranch,
+    ResumeDriveLink,
     Notes,
     JdText,
 }
@@ -66,10 +67,22 @@ const FIELDS: &[(Field, &[&str])] = &[
     (Field::Status, &["application status", "status"]),
     (Field::DateApplied, &["date applied", "applied", "date"]),
     (
+        // "link" dropped: it is a substring of "Resume Drive Link", which must not also match
+        // here.
         Field::ListingUrl,
-        &["listing page", "listing", "url", "link", "posting"],
+        &["listing page", "listing", "url", "posting"],
     ),
-    (Field::ResumeBranch, &["resume branch", "branch", "resume"]),
+    (
+        // Bare "resume" dropped: it matched any header containing the word (including a future
+        // "Resume Drive Link"), which is exactly how an old "Resume" column of PDF filenames
+        // once got misread as this field.
+        Field::ResumeBranch,
+        &["resume branch", "branch"],
+    ),
+    (
+        Field::ResumeDriveLink,
+        &["resume drive link", "drive link", "drive"],
+    ),
     (Field::Notes, &["notes", "note", "comments"]),
     (
         Field::JdText,
@@ -119,6 +132,7 @@ struct SheetColumns {
     date_applied: Option<usize>,
     listing_url: Option<usize>,
     resume_branch: Option<usize>,
+    resume_drive_link: Option<usize>,
     notes: Option<usize>,
     jd_text: Option<usize>,
 }
@@ -133,6 +147,7 @@ impl SheetColumns {
             Field::DateApplied => self.date_applied,
             Field::ListingUrl => self.listing_url,
             Field::ResumeBranch => self.resume_branch,
+            Field::ResumeDriveLink => self.resume_drive_link,
             Field::Notes => self.notes,
             Field::JdText => self.jd_text,
         }
@@ -160,6 +175,7 @@ fn validate_header(header: &[String]) -> Result<SheetColumns, GoogleSheetsError>
         date_applied: column_for(&lowered, candidates(Field::DateApplied)),
         listing_url: column_for(&lowered, candidates(Field::ListingUrl)),
         resume_branch: column_for(&lowered, candidates(Field::ResumeBranch)),
+        resume_drive_link: column_for(&lowered, candidates(Field::ResumeDriveLink)),
         notes: column_for(&lowered, candidates(Field::Notes)),
         jd_text: column_for(&lowered, candidates(Field::JdText)),
     })
@@ -205,6 +221,7 @@ fn application_field(application: &Application, field: Field) -> Option<&str> {
         Field::DateApplied => application.date_applied.as_deref(),
         Field::ListingUrl => application.listing_url.as_deref(),
         Field::ResumeBranch => application.resume_branch.as_deref(),
+        Field::ResumeDriveLink => application.resume_drive_link.as_deref(),
         Field::Notes => application.notes.as_deref(),
         Field::JdText => application.jd_text.as_deref(),
     }
@@ -219,6 +236,7 @@ fn set_application_field(new: &mut NewApplication, field: Field, value: &str) {
         Field::DateApplied => new.date_applied = Some(value.to_string()),
         Field::ListingUrl => new.listing_url = Some(value.to_string()),
         Field::ResumeBranch => new.resume_branch = Some(value.to_string()),
+        Field::ResumeDriveLink => new.resume_drive_link = Some(value.to_string()),
         Field::Notes => new.notes = Some(value.to_string()),
         Field::JdText => new.jd_text = Some(value.to_string()),
     }
@@ -238,6 +256,7 @@ fn new_application_from(fields: &HashMap<Field, String>) -> NewApplication {
         date_applied: fields.get(&Field::DateApplied).cloned(),
         listing_url: fields.get(&Field::ListingUrl).cloned(),
         resume_branch: fields.get(&Field::ResumeBranch).cloned(),
+        resume_drive_link: fields.get(&Field::ResumeDriveLink).cloned(),
         notes: fields.get(&Field::Notes).cloned(),
         jd_text: fields.get(&Field::JdText).cloned(),
     }
@@ -304,33 +323,37 @@ pub fn plan_reconciliation(
     let mut matched_local_ids: HashSet<i64> = HashSet::new();
 
     for (row_offset, row) in remote_rows.iter().enumerate() {
-        // A row with neither a company nor a position is not an application — a blank row
-        // inside the read range, a title/summary line, or trailing sheet padding. Matches
-        // `web/src/lib/sheet.ts`'s `parseSheet` filter for the same reason.
-        if cell(row, Some(columns.company)).trim().is_empty()
+        let id_cell = cell(row, columns.id);
+        let id_matched_id = id_cell
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|id| by_id.contains_key(id) && !matched_local_ids.contains(id));
+
+        // A row with neither a company nor a position, and no Id binding it to a known local
+        // application, is not an application — a blank row inside the read range, a title/
+        // summary line, or trailing sheet padding. Matches `web/src/lib/sheet.ts`'s `parseSheet`
+        // filter for the same reason. A row that DOES carry a recognised Id is never skipped this
+        // way: otherwise a local application with a blank company and position (a fresh,
+        // not-yet-filled-in draft) can never be matched, and gets appended as a "new" row again
+        // on every sync, forever.
+        if id_matched_id.is_none()
+            && cell(row, Some(columns.company)).trim().is_empty()
             && cell(row, Some(columns.position)).trim().is_empty()
         {
             continue;
         }
 
-        let id_cell = cell(row, columns.id);
-        let matched_id = id_cell
-            .trim()
-            .parse::<i64>()
-            .ok()
-            .filter(|id| by_id.contains_key(id) && !matched_local_ids.contains(id))
-            .or_else(|| {
-                let key = (
-                    cell(row, Some(columns.company)).trim().to_string(),
-                    cell(row, Some(columns.position)).trim().to_string(),
-                );
-                by_company_position
-                    .get(&key)
-                    .and_then(|candidates| {
-                        candidates.iter().find(|id| !matched_local_ids.contains(id))
-                    })
-                    .copied()
-            });
+        let matched_id = id_matched_id.or_else(|| {
+            let key = (
+                cell(row, Some(columns.company)).trim().to_string(),
+                cell(row, Some(columns.position)).trim().to_string(),
+            );
+            by_company_position
+                .get(&key)
+                .and_then(|candidates| candidates.iter().find(|id| !matched_local_ids.contains(id)))
+                .copied()
+        });
 
         let Some(local_id) = matched_id else {
             // A genuinely new row: nothing local claims it.
@@ -362,6 +385,7 @@ pub fn plan_reconciliation(
             date_applied: application.date_applied.clone(),
             listing_url: application.listing_url.clone(),
             resume_branch: application.resume_branch.clone(),
+            resume_drive_link: application.resume_drive_link.clone(),
             notes: application.notes.clone(),
             jd_text: application.jd_text.clone(),
         };
@@ -463,6 +487,10 @@ pub fn plan_reconciliation(
             columns.resume_branch,
             application.resume_branch.as_deref().unwrap_or(""),
         );
+        set(
+            columns.resume_drive_link,
+            application.resume_drive_link.as_deref().unwrap_or(""),
+        );
         set(columns.notes, application.notes.as_deref().unwrap_or(""));
         set(
             columns.jd_text,
@@ -558,19 +586,25 @@ pub async fn reconcile(
     }
 
     // Appending a local-only application runs before the cell corrections below, so a brand
-    // new application always reaches the sheet even if a later write fails.
+    // new application always reaches the sheet even if a later write fails. Each row's target is
+    // computed explicitly, right after the existing data (see `write_row`).
+    let mut next_row = header_at + 2 + data_rows.len();
     for append in &plan.row_appends {
         let endpoint = endpoint.to_string();
         let access_token = access_token.to_string();
         let spreadsheet_id = spreadsheet_id.to_string();
         let values = append.values.clone();
+        let row = next_row;
         let result = tokio::task::spawn_blocking(move || {
-            append_row(&endpoint, &access_token, &spreadsheet_id, &values)
+            write_row(&endpoint, &access_token, &spreadsheet_id, row, &values)
         })
         .await
         .expect("appending to the sheet should not panic");
         match result {
-            Ok(()) => outcome.appended_to_sheet += 1,
+            Ok(()) => {
+                outcome.appended_to_sheet += 1;
+                next_row += 1;
+            }
             Err(error) => drop(first_error.get_or_insert(error)),
         }
     }
@@ -776,19 +810,27 @@ fn batch_write_cells(
     Ok(())
 }
 
-/// Appends one row after the sheet's existing table.
-fn append_row(
+/// Writes one full row at an explicit row number computed by the caller — never through Sheets'
+/// own table-autodetection (`values:append`). That heuristic locates "the table" to extend by
+/// scanning the given range for existing data; once a single stray value exists somewhere far
+/// off within it, every future append can lock onto that instead of the real table and keep
+/// landing there. That is what corrupted the sheet with hundreds of stray rows in the past — an
+/// explicit target removes the guesswork entirely.
+fn write_row(
     endpoint: &str,
     access_token: &str,
     spreadsheet_id: &str,
+    row: usize,
     values: &[String],
 ) -> Result<(), GoogleSheetsError> {
-    let url = format!(
-        "{endpoint}/{spreadsheet_id}/values/{SHEET_RANGE}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS"
+    let range = format!(
+        "A{row}:{}{row}",
+        column_letter(values.len().saturating_sub(1))
     );
+    let url = format!("{endpoint}/{spreadsheet_id}/values/{range}?valueInputOption=USER_ENTERED");
     let body = serde_json::json!({ "values": [values] });
     let response = client()?
-        .post(&url)
+        .put(&url)
         .bearer_auth(access_token)
         .json(&body)
         .send()
@@ -814,6 +856,7 @@ mod tests {
             date_applied: None,
             listing_url: None,
             resume_branch: None,
+            resume_drive_link: None,
             notes: None,
             jd_text: None,
             created_at: "2026-01-01".to_string(),
@@ -852,6 +895,7 @@ mod tests {
                     date_applied: None,
                     listing_url: None,
                     resume_branch: None,
+                    resume_drive_link: None,
                     notes: None,
                     jd_text: None,
                 },
@@ -1174,6 +1218,7 @@ mod tests {
                     date_applied: None,
                     listing_url: None,
                     resume_branch: None,
+                    resume_drive_link: None,
                     notes: None,
                     jd_text: None,
                 },
@@ -1220,5 +1265,84 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome.pushed_cells, 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_appends_a_local_only_application_at_an_explicit_row() {
+        // Regression test: a local-only application used to be appended through Sheets'
+        // `values:append`, which locates "the table" to extend by scanning the whole read range
+        // for existing data — a single stray value far off in that range can make every future
+        // append lock onto it instead of the real table. No mock is mounted for that endpoint
+        // here, so a call to it 404s and fails the test; only an explicit, computed target row
+        // is accepted.
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let (_dir, store) = open_temp_store().await;
+        let created = store
+            .create_application(
+                &NewApplication {
+                    company: "NewCo".to_string(),
+                    position: "Dev".to_string(),
+                    status: "applied".to_string(),
+                    date_applied: None,
+                    listing_url: None,
+                    resume_branch: None,
+                    resume_drive_link: None,
+                    notes: None,
+                    jd_text: None,
+                },
+                "owner/repo",
+            )
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sheet-1/values/A1:Z1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "values": [
+                    HEADER,
+                    ["999", "Acme", "Engineer", "applied", "", ""],
+                ],
+            })))
+            .mount(&server)
+            .await;
+        // Id 999 does not match the newly created application's own id, so this seeded row is
+        // untouched — it exists only to give the sheet one pre-existing data row, so the target
+        // row for the append below is meaningfully past the header rather than immediately below
+        // it. The header row is at sheet row 1, one existing data row follows it, so the next
+        // row is 3 — never the ambiguous whole-range append.
+        Mock::given(method("PUT"))
+            .and(path("/sheet-1/values/A3:F3"))
+            .and(body_json(serde_json::json!({
+                "values": [[created.id.to_string(), "NewCo", "Dev", "applied", "", ""]],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        let outcome = reconcile(&store, "owner/repo", &endpoint, "token", "sheet-1")
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.appended_to_sheet, 1);
+    }
+
+    #[test]
+    fn a_blank_company_and_position_row_still_matches_its_known_id() {
+        // Regression test: a local application with a blank company and position (a fresh,
+        // not-yet-filled-in draft) has a sheet row that is also blank in company and position —
+        // it must still be recognised as that application via its Id column, not treated as
+        // padding and re-appended as a "new" row on every sync.
+        let local = vec![application(20, "", "")];
+        let header = row(HEADER);
+        let remote = vec![row(&["20", "", "", "draft", "", ""])];
+
+        let plan = plan_reconciliation(&local, &header, &remote).unwrap();
+
+        assert!(plan.to_create.is_empty());
+        assert!(plan.row_appends.is_empty());
     }
 }

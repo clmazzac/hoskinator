@@ -11,8 +11,9 @@ const COLUMNS: Record<keyof NewApplication, string[]> = {
   position: ["position", "role", "title", "job title"],
   status: ["application status", "status"],
   date_applied: ["date applied", "applied", "date"],
-  listing_url: ["listing page", "listing", "url", "link", "posting"],
-  resume_branch: ["resume branch", "branch", "resume"],
+  listing_url: ["listing page", "listing", "url", "posting"],
+  resume_branch: ["resume branch", "branch"],
+  resume_drive_link: ["resume drive link", "drive link", "drive"],
   notes: ["notes", "note", "comments"],
   jd_text: ["job description", "description", "posting", "jd"],
 };
@@ -138,6 +139,7 @@ export function parseSheet(text: string): NewApplication[] {
       date_applied: readDate(read(row, at.date_applied)),
       listing_url: read(row, at.listing_url) || null,
       resume_branch: read(row, at.resume_branch) || null,
+      resume_drive_link: read(row, at.resume_drive_link) || null,
       notes: read(row, at.notes) || null,
       jd_text: read(row, at.jd_text) || null,
     }));
@@ -158,6 +160,7 @@ export function toCsv(applications: NewApplication[]): string {
       one.status,
       one.listing_url,
       one.resume_branch,
+      one.resume_drive_link,
       one.notes,
       one.jd_text,
     ]
@@ -166,7 +169,7 @@ export function toCsv(applications: NewApplication[]): string {
   );
 
   return [
-    "Company,Position,Date Applied,Application Status,Listing Page,Resume,Notes,Job Description",
+    "Company,Position,Date Applied,Application Status,Listing Page,Resume Branch,Resume Drive Link,Notes,Job Description",
     ...rows,
   ].join("\n");
 }

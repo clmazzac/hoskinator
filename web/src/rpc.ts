@@ -542,6 +542,7 @@ export interface Application {
   date_applied: string | null;
   listing_url: string | null;
   resume_branch: string | null;
+  resume_drive_link: string | null;
   notes: string | null;
   jd_text: string | null;
   created_at: string;
