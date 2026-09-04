@@ -1326,7 +1326,8 @@ mod tests {
             router.clone(),
             r#"{"jsonrpc":"2.0","id":1,"method":"application.create","params":[
                 {"company":"Acme","position":"Engineer","status":"draft","date_applied":null,
-                 "listing_url":null,"resume_branch":null,"notes":null,"jd_text":null}]}"#,
+                 "listing_url":null,"resume_branch":null,"resume_drive_link":null,"notes":null,
+                 "jd_text":null}]}"#,
         )
         .await;
         assert_eq!(created["result"]["company"], "Acme", "got {created}");
