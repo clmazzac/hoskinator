@@ -642,6 +642,105 @@ pub async fn reconcile(
     }
 }
 
+/// Pushes one application's current fields into its sheet row, unconditionally — appended as a
+/// new row if it has none yet, overwriting every tracked cell if it does. Never pulls the sheet's
+/// side back over the write, unlike [`reconcile`]: called right after the app's own table saves
+/// an edit, where the value just saved is authoritative by definition. Running an app-originated
+/// write back through `reconcile`'s bidirectional "a non-blank sheet cell always wins" merge is
+/// what used to undo the edit on the very next sync — that merge is for the background poll
+/// pulling in genuine sheet-side edits, not for echoing this app's own writes back over
+/// themselves.
+pub async fn push_application_to_sheet(
+    application: &Application,
+    endpoint: &str,
+    access_token: &str,
+    spreadsheet_id: &str,
+) -> Result<(), GoogleSheetsError> {
+    let rows = {
+        let endpoint = endpoint.to_string();
+        let access_token = access_token.to_string();
+        let spreadsheet_id = spreadsheet_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            read_range(&endpoint, &access_token, &spreadsheet_id, SHEET_RANGE)
+        })
+        .await
+        .expect("reading the sheet should not panic")?
+    };
+    if rows.is_empty() {
+        return Err(GoogleSheetsError::NoHeaderRow);
+    }
+    let (header_at, columns) = find_header_row(&rows)?;
+    let data_rows = &rows[header_at + 1..];
+
+    let matched_offset = columns
+        .id
+        .and_then(|id_column| {
+            data_rows.iter().position(|row| {
+                cell(row, Some(id_column)).trim().parse::<i64>() == Ok(application.id)
+            })
+        })
+        .or_else(|| {
+            data_rows.iter().position(|row| {
+                cell(row, Some(columns.company)).trim() == application.company
+                    && cell(row, Some(columns.position)).trim() == application.position
+            })
+        });
+
+    let field_values: Vec<(usize, String)> = FIELDS
+        .iter()
+        .filter_map(|(field, _)| {
+            let column = columns.get(*field)?;
+            let value = match field {
+                Field::Id => application.id.to_string(),
+                Field::Status => normalize_status(&application.status),
+                _ => application_field(application, *field)
+                    .unwrap_or("")
+                    .to_string(),
+            };
+            Some((column, value))
+        })
+        .collect();
+
+    let endpoint = endpoint.to_string();
+    let access_token = access_token.to_string();
+    let spreadsheet_id = spreadsheet_id.to_string();
+    match matched_offset {
+        Some(offset) => {
+            let absolute_row = header_at + 2 + offset;
+            let writes: Vec<(String, String)> = field_values
+                .into_iter()
+                .map(|(column, value)| {
+                    (format!("{}{}", column_letter(column), absolute_row), value)
+                })
+                .collect();
+            tokio::task::spawn_blocking(move || {
+                batch_write_cells(&endpoint, &access_token, &spreadsheet_id, &writes)
+            })
+            .await
+            .expect("writing the sheet should not panic")
+        }
+        None => {
+            let width = field_values
+                .iter()
+                .map(|(column, _)| column + 1)
+                .max()
+                .unwrap_or(0)
+                .max(columns.company + 1)
+                .max(columns.position + 1);
+            let mut values = vec![String::new(); width];
+            for (column, value) in field_values {
+                values[column] = value;
+            }
+            let row = header_at + 2 + data_rows.len();
+            tokio::task::spawn_blocking(move || {
+                write_row(&endpoint, &access_token, &spreadsheet_id, row, &values)
+            })
+            .await
+            .expect("appending to the sheet should not panic")
+        }
+    }
+}
+
 /// Clears a row's tracked-column cells from the linked sheet — called when an application is
 /// deleted locally, so the next sync does not read its old row back as a brand-new application.
 /// Matched by `application_id` against the Id column when the row has one, falling back to
@@ -1344,5 +1443,79 @@ mod tests {
 
         assert!(plan.to_create.is_empty());
         assert!(plan.row_appends.is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_application_to_sheet_overwrites_the_matched_row_regardless_of_its_sheet_value() {
+        // Regression test: pushing a local edit must never be influenced by what the sheet
+        // currently holds for that application — that is exactly the bidirectional-merge
+        // behaviour ("a non-blank sheet cell always wins") that undid app-made edits on the very
+        // next sync. The sheet's status here ("interview") differs from the pushed application's
+        // ("applied"); the write must carry "applied" regardless.
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut local_application = application(1, "Acme", "Engineer");
+        local_application.status = "applied".to_string();
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sheet-1/values/A1:Z1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "values": [HEADER, ["1", "Acme", "Engineer", "interview", "", ""]],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/sheet-1/values:batchUpdate"))
+            .and(body_json(serde_json::json!({
+                "valueInputOption": "USER_ENTERED",
+                "data": [
+                    {"range": "A2", "values": [["1"]]},
+                    {"range": "B2", "values": [["Acme"]]},
+                    {"range": "C2", "values": [["Engineer"]]},
+                    {"range": "D2", "values": [["applied"]]},
+                    {"range": "E2", "values": [[""]]},
+                    {"range": "F2", "values": [[""]]},
+                ],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        push_application_to_sheet(&local_application, &endpoint, "token", "sheet-1")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn push_application_to_sheet_appends_a_new_row_when_unmatched() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let local_application = application(9, "NewCo", "Dev");
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sheet-1/values/A1:Z1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "values": [HEADER],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/sheet-1/values/A2:F2"))
+            .and(body_json(serde_json::json!({
+                "values": [["9", "NewCo", "Dev", "applied", "", ""]],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        push_application_to_sheet(&local_application, &endpoint, "token", "sheet-1")
+            .await
+            .unwrap();
     }
 }

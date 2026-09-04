@@ -420,6 +420,13 @@ pub trait GoogleRpc {
         company: String,
         position: String,
     ) -> RpcResult<bool>;
+
+    /// Pushes one application's current fields into its sheet row, unconditionally — for a value
+    /// the app's own table just saved, never through `sync_now`'s bidirectional merge, which
+    /// would read the sheet's still-stale cell and undo the edit. A no-op if no account is
+    /// connected or no sheet is linked.
+    #[method(name = "google.push_application")]
+    async fn google_push_application(&self, application: Application) -> RpcResult<bool>;
 }
 
 #[rpc(server, client)]
@@ -2207,6 +2214,37 @@ impl GoogleRpcServer for GoogleAuthApi {
             application_id,
             &company,
             &position,
+        )
+        .await
+        .map_err(|error| {
+            ErrorObjectOwned::owned(GOOGLE_SHEETS_SYNC, source_message(&error), None::<()>)
+        })?;
+        Ok(true)
+    }
+
+    async fn google_push_application(&self, application: Application) -> RpcResult<bool> {
+        let config = Self::config()?;
+        let (Some(client_id), Some(client_secret), Some(refresh_token), Some(spreadsheet_id)) = (
+            config.google_client_id,
+            config.google_client_secret,
+            config.google_refresh_token,
+            config.applications_sheet,
+        ) else {
+            return Ok(false);
+        };
+
+        let access_token = google_blocking(move || {
+            google_auth::refresh_access_token(&client_id, &client_secret, &refresh_token)
+        })
+        .await?
+        .access_token;
+
+        let _guard = self.sync_lock.0.lock().await;
+        google_sheets::push_application_to_sheet(
+            &application,
+            google_sheets::SHEETS_API,
+            &access_token,
+            &spreadsheet_id,
         )
         .await
         .map_err(|error| {

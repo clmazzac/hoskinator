@@ -29,8 +29,8 @@ import {
   createApplication,
   deleteApplication,
   googleStatus,
+  pushApplicationToSheet,
   removeFromGoogleSheet,
-  syncGoogleSheetNow,
   updateApplication,
   type Application,
   type Branch,
@@ -149,11 +149,15 @@ export default function ApplicationTracker({
   }, []);
 
   // Every local edit below funnels through here: refreshes the sync status display, and, with
-  // auto-sync on, pushes to the sheet immediately instead of waiting for the next background tick.
-  const notifyChanged = () => {
+  // auto-sync on, pushes the edited application straight to its own sheet row. This pushes rather
+  // than running the full bidirectional sync (google.sync_now) — that merge treats a non-blank
+  // sheet cell as always winning, which is right for the background poll pulling in genuine
+  // sheet-side edits, but would immediately read this application's still-stale sheet cell and
+  // undo the edit just made here.
+  const notifyChanged = (pushed?: Application | null) => {
     onChanged();
-    if (googleSync?.sync_enabled) {
-      syncGoogleSheetNow().then(refreshGoogleSync, refreshGoogleSync);
+    if (googleSync?.sync_enabled && pushed) {
+      pushApplicationToSheet(pushed).then(refreshGoogleSync, refreshGoogleSync);
     } else {
       refreshGoogleSync();
     }
