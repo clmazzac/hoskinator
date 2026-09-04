@@ -139,7 +139,9 @@ fn router(
     module.merge(JobDescriptionApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(ResumeApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
     module.merge(RenderApi::new(active.clone()).into_rpc())?;
-    module.merge(ApplicationApi::new(Arc::clone(&store), active.clone()).into_rpc())?;
+    module.merge(
+        ApplicationApi::new(Arc::clone(&store), active.clone(), sync_lock.clone()).into_rpc(),
+    )?;
     module.merge(WorkspaceApi::new(active.clone(), default_repository_root).into_rpc())?;
     module.merge(
         GoogleAuthApi::new(
