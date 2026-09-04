@@ -632,14 +632,6 @@ export function setGoogleSyncEnabled(enabled: boolean): Promise<boolean> {
   return call<boolean>("google.set_sync_enabled", [enabled]);
 }
 
-/**
- * Pushes one application's current fields into its sheet row, unconditionally. Used right after
- * a local edit, instead of `syncGoogleSheetNow` — running an edit through that bidirectional
- * sync would read the sheet's still-stale cell and undo it.
- */
-export function pushApplicationToSheet(application: Application): Promise<boolean> {
-  return call<boolean>("google.push_application", [application]);
-}
 
 /**
  * Clears a deleted application's row from the linked sheet, so the next sync does not read it

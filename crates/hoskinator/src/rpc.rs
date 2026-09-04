@@ -420,13 +420,6 @@ pub trait GoogleRpc {
         company: String,
         position: String,
     ) -> RpcResult<bool>;
-
-    /// Pushes one application's current fields into its sheet row, unconditionally — for a value
-    /// the app's own table just saved, never through `sync_now`'s bidirectional merge, which
-    /// would read the sheet's still-stale cell and undo the edit. A no-op if no account is
-    /// connected or no sheet is linked.
-    #[method(name = "google.push_application")]
-    async fn google_push_application(&self, application: Application) -> RpcResult<bool>;
 }
 
 #[rpc(server, client)]
@@ -1776,14 +1769,53 @@ fn render_rpc_error(error: RenderError) -> ErrorObjectOwned {
 pub struct ApplicationApi {
     store: Arc<Store>,
     repository_path: ActiveRepository,
+    sync_lock: SyncLock,
 }
 
 impl ApplicationApi {
-    pub fn new(store: Arc<Store>, repository_path: ActiveRepository) -> Self {
+    pub fn new(store: Arc<Store>, repository_path: ActiveRepository, sync_lock: SyncLock) -> Self {
         Self {
             store,
             repository_path,
+            sync_lock,
         }
+    }
+
+    /// Pushes `application`'s current fields into its sheet row, holding `sync_lock` across both
+    /// the save that just happened and this push — so the background poll can never observe
+    /// "local fresh, sheet stale" for it and pull the sheet's older value back over the edit just
+    /// made, which is what used to undo an edit on the very next sync tick. Best-effort: no
+    /// account connected, no sheet linked, or a network error must never fail the save itself,
+    /// so every outcome here is silently swallowed.
+    async fn push_if_syncing(&self, application: &Application) {
+        let Ok(config) = hoskinator_core::home::Home::config() else {
+            return;
+        };
+        if !config.google_sync_enabled.unwrap_or(false) {
+            return;
+        }
+        let (Some(client_id), Some(client_secret), Some(refresh_token), Some(spreadsheet_id)) = (
+            config.google_client_id,
+            config.google_client_secret,
+            config.google_refresh_token,
+            config.applications_sheet,
+        ) else {
+            return;
+        };
+        let Ok(tokens) = google_blocking(move || {
+            google_auth::refresh_access_token(&client_id, &client_secret, &refresh_token)
+        })
+        .await
+        else {
+            return;
+        };
+        let _ = google_sheets::push_application_to_sheet(
+            application,
+            google_sheets::SHEETS_API,
+            &tokens.access_token,
+            &spreadsheet_id,
+        )
+        .await;
     }
 
     /// The `owner/name` of the resume repository currently active, used to scope applications.
@@ -1817,10 +1849,14 @@ impl ApplicationRpcServer for ApplicationApi {
 
     async fn application_create(&self, application: NewApplication) -> RpcResult<Application> {
         let repository = self.repository_scope().await?;
-        self.store
+        let _guard = self.sync_lock.0.lock().await;
+        let created = self
+            .store
             .create_application(&application, &repository)
             .await
-            .map_err(store_rpc_error)
+            .map_err(store_rpc_error)?;
+        self.push_if_syncing(&created).await;
+        Ok(created)
     }
 
     async fn application_update(
@@ -1828,10 +1864,14 @@ impl ApplicationRpcServer for ApplicationApi {
         id: i64,
         application: NewApplication,
     ) -> RpcResult<Application> {
-        self.store
+        let _guard = self.sync_lock.0.lock().await;
+        let updated = self
+            .store
             .update_application(id, &application)
             .await
-            .map_err(store_rpc_error)
+            .map_err(store_rpc_error)?;
+        self.push_if_syncing(&updated).await;
+        Ok(updated)
     }
 
     async fn application_delete(&self, id: i64) -> RpcResult<()> {
@@ -2214,37 +2254,6 @@ impl GoogleRpcServer for GoogleAuthApi {
             application_id,
             &company,
             &position,
-        )
-        .await
-        .map_err(|error| {
-            ErrorObjectOwned::owned(GOOGLE_SHEETS_SYNC, source_message(&error), None::<()>)
-        })?;
-        Ok(true)
-    }
-
-    async fn google_push_application(&self, application: Application) -> RpcResult<bool> {
-        let config = Self::config()?;
-        let (Some(client_id), Some(client_secret), Some(refresh_token), Some(spreadsheet_id)) = (
-            config.google_client_id,
-            config.google_client_secret,
-            config.google_refresh_token,
-            config.applications_sheet,
-        ) else {
-            return Ok(false);
-        };
-
-        let access_token = google_blocking(move || {
-            google_auth::refresh_access_token(&client_id, &client_secret, &refresh_token)
-        })
-        .await?
-        .access_token;
-
-        let _guard = self.sync_lock.0.lock().await;
-        google_sheets::push_application_to_sheet(
-            &application,
-            google_sheets::SHEETS_API,
-            &access_token,
-            &spreadsheet_id,
         )
         .await
         .map_err(|error| {
