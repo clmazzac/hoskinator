@@ -70,11 +70,15 @@ function Cell({ children, className }: { children: React.ReactNode; className?: 
   return <td className={cn("px-3 py-2.5 align-middle", className)}>{children}</td>;
 }
 
-/// `date_applied`'s value for sorting. A blank or unparseable date sorts as the earliest
-/// possible date, the same way an empty string sorts first among the other columns.
+/// `date_applied`'s value for sorting. A blank or unparseable date sorts as the most recent —
+/// a freshly added application has no date yet, and should read as "not yet applied" rather than
+/// sink to the bottom of a most-recent-first sort where it would be easy to lose track of. Uses a
+/// large finite sentinel rather than Infinity so two blank dates compare equal (Infinity - Infinity
+/// is NaN, which Array.sort does not handle sensibly) instead of sorting arbitrarily against each
+/// other.
 function dateSortValue(value: string | null): number {
   const parsed = value ? Date.parse(value) : NaN;
-  return Number.isNaN(parsed) ? -Infinity : parsed;
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
 }
 
 /// A key every column but the trailing delete button can sort by: alphabetically on its raw
