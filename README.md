@@ -1,6 +1,5 @@
 # hoskinator
-Resume management system
-test
+Resume management system using Git for version control. This is what I actively use (deployed on gcloud) to make my resumes for the 2027 SWE intern application season!
 
 ## Development
 
